@@ -1,6 +1,7 @@
 import datetime
 import ast
 import operator
+import rag
 
 ALLOWED_OPERATORS = {
     ast.Add: operator.add,
@@ -66,10 +67,28 @@ TOOL_SCHEMAS = [
                 "properties": {}
             }
         }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "search_documents",
+            "description": "Search the user's personal documents (PDFs, DOCX files) for relevant information. Use this when the user asks a question that might be answered by their uploaded documents.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "query": {
+                        "type": "string",
+                        "description": "The search query or question to look up in the documents."
+                    }
+                },
+                "required": ["query"]
+            }
+        }
     }
 ]
 
 AVAILABLE_FUNCTIONS = {
     "calculator": calculator,
     "get_current_datetime": get_current_datetime,
+    "search_documents": rag.search_documents,
 }
