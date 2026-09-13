@@ -1,5 +1,7 @@
 import ollama
 import memory
+import tools
+import json
 
 def main():
     memory.init_db()
@@ -23,10 +25,40 @@ def main():
 
         response = ollama.chat(
             model="qwen3:4b",
-            messages=conversation_history
+            messages=conversation_history,
+            tools=tools.TOOL_SCHEMAS
         )
 
-        assistant_reply = response["message"]["content"]
+        message = response["message"]
+
+        if message.get("tool_calls"):
+            conversation_history.append(message)
+
+            for tool_call in message["tool_calls"]:
+                function_name = tool_call["function"]["name"]
+                function_args = tool_call["function"]["arguments"]
+
+                print(f"[Agent is using tool: {function_name}({function_args})]")
+
+                if function_name in tools.AVAILABLE_FUNCTIONS:
+                    function_to_call = tools.AVAILABLE_FUNCTIONS[function_name]
+                    function_result = function_to_call(**function_args)
+                else:
+                    function_result = f"Error: unknown tool '{function_name}'"
+
+                conversation_history.append({
+                    "role": "tool",
+                    "content": str(function_result)
+                })
+
+            final_response = ollama.chat(
+                model="qwen3:4b",
+                messages=conversation_history
+            )
+            assistant_reply = final_response["message"]["content"]
+        else:
+            assistant_reply = message["content"]
+
         print(f"Agent: {assistant_reply}\n")
 
         conversation_history.append({"role": "assistant", "content": assistant_reply})
