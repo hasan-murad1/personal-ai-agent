@@ -1,13 +1,12 @@
 import ollama
 import memory
 import tools
-import json
 
 def main():
     memory.init_db()
-    
+
     print("Personal AI Agent (type 'exit' to quit)\n")
-    
+
     conversation_history = memory.load_history(limit=20)
 
     if conversation_history:
@@ -15,7 +14,7 @@ def main():
 
     while True:
         user_input = input("You: ")
-        
+
         if user_input.lower() == "exit":
             print("Goodbye!")
             break
@@ -38,11 +37,33 @@ def main():
                 function_name = tool_call["function"]["name"]
                 function_args = tool_call["function"]["arguments"]
 
+                is_risky = tools.RISKY_TOOLS.get(function_name, False)
+
+                if is_risky:
+                    print(f"\n⚠️  The agent wants to run a RISKY action:")
+                    print(f"   Tool: {function_name}")
+                    print(f"   Arguments: {function_args}")
+                    confirm = input("   Allow this? (yes/no): ").strip().lower()
+
+                    if confirm != "yes":
+                        function_result = "Action cancelled by user. Do not retry without asking again."
+                        print("   -> Cancelled.\n")
+                        conversation_history.append({
+                            "role": "tool",
+                            "content": str(function_result)
+                        })
+                        continue
+                    else:
+                        print("   -> Confirmed, proceeding.\n")
+
                 print(f"[Agent is using tool: {function_name}({function_args})]")
 
                 if function_name in tools.AVAILABLE_FUNCTIONS:
                     function_to_call = tools.AVAILABLE_FUNCTIONS[function_name]
-                    function_result = function_to_call(**function_args)
+                    try:
+                        function_result = function_to_call(**function_args)
+                    except Exception as e:
+                        function_result = f"Error running tool: {e}"
                 else:
                     function_result = f"Error: unknown tool '{function_name}'"
 
