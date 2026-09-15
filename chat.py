@@ -2,6 +2,8 @@ import ollama
 import memory
 import tools
 
+MAX_TOOL_ITERATIONS = 5
+
 def main():
     memory.init_db()
 
@@ -22,15 +24,24 @@ def main():
         conversation_history.append({"role": "user", "content": user_input})
         memory.save_message("user", user_input)
 
-        response = ollama.chat(
-            model="qwen3:4b",
-            messages=conversation_history,
-            tools=tools.TOOL_SCHEMAS
-        )
+        assistant_reply = None
+        iterations = 0
 
-        message = response["message"]
+        while iterations < MAX_TOOL_ITERATIONS:
+            iterations += 1
 
-        if message.get("tool_calls"):
+            response = ollama.chat(
+                model="qwen3:4b",
+                messages=conversation_history,
+                tools=tools.TOOL_SCHEMAS
+            )
+
+            message = response["message"]
+
+            if not message.get("tool_calls"):
+                assistant_reply = message["content"]
+                break
+
             conversation_history.append(message)
 
             for tool_call in message["tool_calls"]:
@@ -72,13 +83,8 @@ def main():
                     "content": str(function_result)
                 })
 
-            final_response = ollama.chat(
-                model="qwen3:4b",
-                messages=conversation_history
-            )
-            assistant_reply = final_response["message"]["content"]
-        else:
-            assistant_reply = message["content"]
+        if assistant_reply is None:
+            assistant_reply = "I reached the maximum number of steps trying to complete this. Could you simplify the request?"
 
         print(f"Agent: {assistant_reply}\n")
 
