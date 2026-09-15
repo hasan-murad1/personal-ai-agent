@@ -39,9 +39,18 @@ def main():
             message = response["message"]
 
             if not message.get("tool_calls"):
-                assistant_reply = message["content"]
-                break
+                content = message["content"]
 
+                if '"function"' in content or "tool_call" in content.lower():
+                    conversation_history.append({"role": "assistant", "content": content})
+                    conversation_history.append({
+                        "role": "user",
+                        "content": "That did not run as a real tool call. Please use the actual tool-calling mechanism, one tool at a time, not text."
+                    })
+                    continue
+
+                assistant_reply = content
+                break
             conversation_history.append(message)
 
             for tool_call in message["tool_calls"]:

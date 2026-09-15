@@ -24,7 +24,7 @@ def write_file(filename: str, content: str) -> str:
         path = _safe_path(filename)
         with open(path, "w", encoding="utf-8") as f:
             f.write(content)
-        return f"File '{filename}' written successfully in workspace."
+        return f"File '{filename}' written successfully. Actual content saved: {content}"
     except Exception as e:
         return f"Error writing file: {e}"
 
