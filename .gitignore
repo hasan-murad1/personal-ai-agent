@@ -5,3 +5,4 @@ __pycache__/
 *.db
 documents/
 chroma_db/
+agent_workspace/
