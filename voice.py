@@ -42,10 +42,12 @@ def record_audio():
 
 
 def transcribe_audio(file_path):
-    segments, info = stt_model.transcribe(file_path)
+    segments, info = stt_model.transcribe(
+        file_path,
+        initial_prompt="This is a conversation about an AI agent with a sandbox folder, workspace, files, and automation tools."
+    )
     text = " ".join(segment.text for segment in segments)
     return text.strip()
-
 
 def clean_text_for_speech(text):
     text = re.sub(r'\*\*(.*?)\*\*', r'\1', text)

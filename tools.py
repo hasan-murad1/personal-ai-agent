@@ -3,6 +3,7 @@ import datetime
 import ast
 import operator
 import rag
+import automation
 
 WORKSPACE_DIR = "agent_workspace"
 
@@ -172,6 +173,59 @@ TOOL_SCHEMAS = [
                 "properties": {}
             }
         }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "open_application",
+            "description": "Open an allowed application (notepad or calculator).",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "app_name": {"type": "string", "description": "Name of the app to open: 'notepad' or 'calculator'"}
+                },
+                "required": ["app_name"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "list_sandbox_contents",
+            "description": "List files and folders inside the automation sandbox.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "subfolder": {"type": "string", "description": "Optional subfolder path within the sandbox, leave empty for root"}
+                },
+                "required": []
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "create_sandbox_folder",
+            "description": "Create a new folder inside the automation sandbox.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "folder_name": {"type": "string", "description": "Name of the new folder to create"}
+                },
+                "required": ["folder_name"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "open_sandbox_folder_in_explorer",
+            "description": "Open the automation sandbox folder in Windows File Explorer so the user can see its contents.",
+            "parameters": {
+                "type": "object",
+                "properties": {}
+            }
+        }
     }
 ]
 
@@ -182,9 +236,15 @@ AVAILABLE_FUNCTIONS = {
     "write_file": write_file,
     "delete_file": delete_file,
     "list_workspace_files": list_workspace_files,
+    "open_application": automation.open_application,
+    "list_sandbox_contents": automation.list_sandbox_contents,
+    "create_sandbox_folder": automation.create_sandbox_folder,
+    "open_sandbox_folder_in_explorer": automation.open_sandbox_folder_in_explorer,
 }
 
 RISKY_TOOLS = {
     "write_file": True,
     "delete_file": True,
+    "open_application": True,
+    "create_sandbox_folder": True,
 }
