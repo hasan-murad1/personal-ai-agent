@@ -1,13 +1,14 @@
 import ollama
 import memory
 import tools
+import voice
 
 MAX_TOOL_ITERATIONS = 5
 
 def main():
     memory.init_db()
 
-    print("Personal AI Agent (type 'exit' to quit)\n")
+    print("Personal AI Agent (voice mode) - press Ctrl+C to quit\n")
 
     conversation_history = memory.load_history(limit=20)
 
@@ -15,10 +16,17 @@ def main():
         print("(Previous conversation loaded)\n")
 
     while True:
-        user_input = input("You: ")
+        audio_file = voice.record_audio()
+        user_input = voice.transcribe_audio(audio_file)
+        print(f"You said: {user_input}")
 
-        if user_input.lower() == "exit":
+        if not user_input.strip():
+            print("(No speech detected, try again)\n")
+            continue
+
+        if user_input.lower().strip(".") == "exit":
             print("Goodbye!")
+            voice.speak_text("Goodbye!")
             break
 
         conversation_history.append({"role": "user", "content": user_input})
@@ -51,6 +59,7 @@ def main():
 
                 assistant_reply = content
                 break
+
             conversation_history.append(message)
 
             for tool_call in message["tool_calls"]:
@@ -96,6 +105,7 @@ def main():
             assistant_reply = "I reached the maximum number of steps trying to complete this. Could you simplify the request?"
 
         print(f"Agent: {assistant_reply}\n")
+        voice.speak_text(assistant_reply)
 
         conversation_history.append({"role": "assistant", "content": assistant_reply})
         memory.save_message("assistant", assistant_reply)
