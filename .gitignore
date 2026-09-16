@@ -6,3 +6,7 @@ __pycache__/
 documents/
 chroma_db/
 agent_workspace/
+automation_sandbox/
+temp_recording.wav
+*.onnx
+*.onnx.json
