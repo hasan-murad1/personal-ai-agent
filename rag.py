@@ -19,6 +19,7 @@ collection = client.get_or_create_collection(
 
 
 def extract_text(file_path):
+    """Extract raw text from a PDF or DOCX file. Returns None if the file type is unsupported."""
     if file_path.endswith(".pdf"):
         reader = PdfReader(file_path)
         return "\n".join(page.extract_text() or "" for page in reader.pages)
@@ -30,6 +31,7 @@ def extract_text(file_path):
 
 
 def chunk_text(text, chunk_size=100, overlap=20):
+    """Split text into overlapping word-based chunks, sized for better retrieval accuracy with small models."""
     words = text.split()
     chunks = []
     start = 0
@@ -42,6 +44,7 @@ def chunk_text(text, chunk_size=100, overlap=20):
 
 
 def ingest_document(file_path):
+    """Extract, chunk, and store a single document's contents in the vector database."""
     text = extract_text(file_path)
     if not text:
         return f"Could not extract text from {file_path}"
@@ -62,6 +65,7 @@ def ingest_document(file_path):
 
 
 def ingest_folder(folder_path="documents"):
+    """Ingest every supported PDF/DOCX file found in the given folder."""
     results = []
     for file_name in os.listdir(folder_path):
         file_path = os.path.join(folder_path, file_name)
@@ -72,6 +76,7 @@ def ingest_folder(folder_path="documents"):
 
 
 def search_documents(query: str, n_results: int = 3) -> str:
+    """Search ingested documents for the most relevant chunks to a query, with source attribution."""
     results = collection.query(
         query_texts=[query],
         n_results=n_results

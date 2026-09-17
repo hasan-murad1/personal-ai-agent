@@ -10,7 +10,7 @@ SAMPLE_RATE = 16000
 TEMP_AUDIO_FILE = "temp_recording.wav"
 
 print("Loading Whisper model (this happens once)...")
-stt_model = WhisperModel("tiny", device="cpu", compute_type="int8")
+stt_model = WhisperModel("base", device="cpu", compute_type="int8")
 print("Whisper model loaded.\n")
 
 print("Loading TTS voice (this happens once)...")
@@ -19,6 +19,7 @@ print("TTS voice loaded.\n")
 
 
 def record_audio():
+    """Record audio from the microphone using push-to-talk: Enter to start, Enter again to stop."""
     input("Press Enter to START recording...")
     print("Recording... press Enter again to STOP.")
 
@@ -42,6 +43,7 @@ def record_audio():
 
 
 def transcribe_audio(file_path):
+    """Transcribe a recorded audio file to text using Whisper."""
     segments, info = stt_model.transcribe(
         file_path,
         initial_prompt="This is a conversation about an AI agent with a sandbox folder, workspace, files, and automation tools."
@@ -49,7 +51,9 @@ def transcribe_audio(file_path):
     text = " ".join(segment.text for segment in segments)
     return text.strip()
 
+
 def clean_text_for_speech(text):
+    """Strip markdown formatting and emoji from text before sending it to the TTS engine, since Piper reads them literally."""
     text = re.sub(r'\*\*(.*?)\*\*', r'\1', text)
     text = re.sub(r'\*(.*?)\*', r'\1', text)
     text = re.sub(
@@ -62,6 +66,7 @@ def clean_text_for_speech(text):
 
 
 def speak_text(text):
+    """Convert text to speech using Piper and play it through the speakers."""
     clean_text = clean_text_for_speech(text)
     print(f"[Speaking]: {clean_text}")
 

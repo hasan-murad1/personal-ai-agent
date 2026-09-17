@@ -2,7 +2,9 @@ import sqlite3
 
 DB_NAME = "agent_memory.db"
 
+
 def init_db():
+    """Create the messages table if it doesn't already exist. Safe to call every time the app starts."""
     conn = sqlite3.connect(DB_NAME)
     cursor = conn.cursor()
     cursor.execute("""
@@ -16,7 +18,9 @@ def init_db():
     conn.commit()
     conn.close()
 
+
 def save_message(role, content):
+    """Save a single message (user or assistant) to persistent storage."""
     conn = sqlite3.connect(DB_NAME)
     cursor = conn.cursor()
     cursor.execute(
@@ -26,7 +30,9 @@ def save_message(role, content):
     conn.commit()
     conn.close()
 
+
 def load_history(limit=20):
+    """Load the most recent messages from storage, oldest first, to use as conversation context."""
     conn = sqlite3.connect(DB_NAME)
     cursor = conn.cursor()
     cursor.execute(

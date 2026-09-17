@@ -1,5 +1,6 @@
 import os
 import subprocess
+import webbrowser
 
 SANDBOX_DIR = "automation_sandbox"
 
@@ -12,6 +13,7 @@ ALLOWED_APPS = {
 
 
 def _safe_sandbox_path(relative_path: str) -> str:
+    """Resolve a path to an absolute location inside the sandbox, blocking any attempt to escape it."""
     full_path = os.path.abspath(os.path.join(SANDBOX_DIR, relative_path))
     sandbox_abs = os.path.abspath(SANDBOX_DIR)
 
@@ -22,6 +24,7 @@ def _safe_sandbox_path(relative_path: str) -> str:
 
 
 def open_application(app_name: str) -> str:
+    """Open an application, restricted to a fixed allow-list. Rejects anything not explicitly permitted."""
     app_key = app_name.strip().lower()
 
     if app_key not in ALLOWED_APPS:
@@ -35,6 +38,7 @@ def open_application(app_name: str) -> str:
 
 
 def list_sandbox_contents(subfolder: str = "") -> str:
+    """List files and folders inside the automation sandbox, or a subfolder within it."""
     try:
         path = _safe_sandbox_path(subfolder)
         if not os.path.exists(path):
@@ -48,6 +52,7 @@ def list_sandbox_contents(subfolder: str = "") -> str:
 
 
 def create_sandbox_folder(folder_name: str) -> str:
+    """Create a new folder inside the automation sandbox."""
     try:
         path = _safe_sandbox_path(folder_name)
         os.makedirs(path, exist_ok=True)
@@ -57,9 +62,17 @@ def create_sandbox_folder(folder_name: str) -> str:
 
 
 def open_sandbox_folder_in_explorer() -> str:
+    """Open the automation sandbox folder in Windows File Explorer."""
     try:
         sandbox_abs = os.path.abspath(SANDBOX_DIR)
         os.startfile(sandbox_abs)
         return "Opened the sandbox folder in File Explorer."
     except Exception as e:
         return f"Error opening folder: {e}"
+
+
+def open_youtube_search(query: str) -> str:
+    """Open a YouTube search results page in the default browser for the given query."""
+    search_url = f"https://www.youtube.com/results?search_query={query.replace(' ', '+')}"
+    webbrowser.open(search_url)
+    return f"Opened YouTube search for '{query}' in your browser."

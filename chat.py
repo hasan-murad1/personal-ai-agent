@@ -5,7 +5,9 @@ import voice
 
 MAX_TOOL_ITERATIONS = 5
 
+
 def main():
+    """Run the main voice-based conversation loop: record, transcribe, reason with tool-calling, and speak the response."""
     memory.init_db()
 
     print("Personal AI Agent (voice mode) - press Ctrl+C to quit\n")
@@ -109,6 +111,7 @@ def main():
 
         conversation_history.append({"role": "assistant", "content": assistant_reply})
         memory.save_message("assistant", assistant_reply)
+
 
 if __name__ == "__main__":
     main()

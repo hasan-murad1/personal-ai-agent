@@ -11,6 +11,7 @@ os.makedirs(WORKSPACE_DIR, exist_ok=True)
 
 
 def _safe_path(filename: str) -> str:
+    """Resolve a filename to an absolute path inside the workspace, blocking any attempt to escape it."""
     full_path = os.path.abspath(os.path.join(WORKSPACE_DIR, filename))
     workspace_abs = os.path.abspath(WORKSPACE_DIR)
 
@@ -21,6 +22,7 @@ def _safe_path(filename: str) -> str:
 
 
 def write_file(filename: str, content: str) -> str:
+    """Create or overwrite a file inside the workspace. Returns the actual content written, to prevent the model from hallucinating a different summary."""
     try:
         path = _safe_path(filename)
         with open(path, "w", encoding="utf-8") as f:
@@ -31,6 +33,7 @@ def write_file(filename: str, content: str) -> str:
 
 
 def delete_file(filename: str) -> str:
+    """Delete a file from the workspace, if it exists."""
     try:
         path = _safe_path(filename)
         if not os.path.exists(path):
@@ -42,6 +45,7 @@ def delete_file(filename: str) -> str:
 
 
 def list_workspace_files() -> str:
+    """List all files currently in the workspace folder."""
     files = os.listdir(WORKSPACE_DIR)
     if not files:
         return "The workspace folder is empty."
@@ -59,6 +63,7 @@ ALLOWED_OPERATORS = {
 
 
 def _safe_eval(node):
+    """Recursively evaluate a parsed math expression, allowing only a fixed set of safe operators (no eval())."""
     if isinstance(node, ast.Constant):
         return node.value
     elif isinstance(node, ast.BinOp):
@@ -76,6 +81,7 @@ def _safe_eval(node):
 
 
 def calculator(expression: str) -> str:
+    """Safely evaluate a basic math expression without using Python's eval()."""
     try:
         tree = ast.parse(expression, mode="eval")
         result = _safe_eval(tree.body)
@@ -85,6 +91,7 @@ def calculator(expression: str) -> str:
 
 
 def get_current_datetime() -> str:
+    """Return the current date and time as a formatted string."""
     return datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
 
