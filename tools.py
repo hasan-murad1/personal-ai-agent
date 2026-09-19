@@ -237,6 +237,20 @@ TOOL_SCHEMAS = [
         {
         "type": "function",
         "function": {
+            "name": "open_youtube_search",
+            "description": "Open YouTube search results in the browser for a given query.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "query": {"type": "string", "description": "What to search for on YouTube"}
+                },
+                "required": ["query"]
+            }
+        }
+    },
+        {
+        "type": "function",
+        "function": {
             "name": "send_email",
             "description": "Send an email to the pre-approved recipient. Use only when the user explicitly asks to send an email.",
             "parameters": {
@@ -262,6 +276,7 @@ AVAILABLE_FUNCTIONS = {
     "list_sandbox_contents": automation.list_sandbox_contents,
     "create_sandbox_folder": automation.create_sandbox_folder,
     "open_sandbox_folder_in_explorer": automation.open_sandbox_folder_in_explorer,
+    "open_youtube_search": automation.open_youtube_search,
     "send_email": automation.send_email,
 }
 
