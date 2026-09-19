@@ -1,6 +1,11 @@
 import os
 import subprocess
 import webbrowser
+import smtplib
+from email.mime.text import MIMEText
+from dotenv import load_dotenv
+
+load_dotenv()
 
 SANDBOX_DIR = "automation_sandbox"
 
@@ -10,6 +15,10 @@ ALLOWED_APPS = {
     "notepad": "notepad.exe",
     "calculator": "calc.exe",
 }
+
+AGENT_EMAIL = os.environ.get("AGENT_EMAIL")
+AGENT_EMAIL_PASSWORD = os.environ.get("AGENT_EMAIL_PASSWORD")
+ALLOWED_RECIPIENT = "hmefat28@gmail.com"
 
 
 def _safe_sandbox_path(relative_path: str) -> str:
@@ -76,3 +85,24 @@ def open_youtube_search(query: str) -> str:
     search_url = f"https://www.youtube.com/results?search_query={query.replace(' ', '+')}"
     webbrowser.open(search_url)
     return f"Opened YouTube search for '{query}' in your browser."
+
+
+def send_email(subject: str, body: str) -> str:
+    """Send an email through the agent's dedicated test account, restricted to a single pre-approved recipient."""
+    if not AGENT_EMAIL or not AGENT_EMAIL_PASSWORD:
+        return "Error: email credentials are not configured."
+
+    try:
+        msg = MIMEText(body)
+        msg["Subject"] = subject
+        msg["From"] = AGENT_EMAIL
+        msg["To"] = ALLOWED_RECIPIENT
+
+        with smtplib.SMTP("smtp.gmail.com", 587) as server:
+            server.starttls()
+            server.login(AGENT_EMAIL, AGENT_EMAIL_PASSWORD)
+            server.send_message(msg)
+
+        return f"Email sent to {ALLOWED_RECIPIENT} with subject '{subject}' and body: {body}"
+    except Exception as e:
+        return f"Error sending email: {e}"

@@ -233,6 +233,21 @@ TOOL_SCHEMAS = [
                 "properties": {}
             }
         }
+    },
+        {
+        "type": "function",
+        "function": {
+            "name": "send_email",
+            "description": "Send an email to the pre-approved recipient. Use only when the user explicitly asks to send an email.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "subject": {"type": "string", "description": "Email subject line"},
+                    "body": {"type": "string", "description": "Email body content"}
+                },
+                "required": ["subject", "body"]
+            }
+        }
     }
 ]
 
@@ -247,6 +262,7 @@ AVAILABLE_FUNCTIONS = {
     "list_sandbox_contents": automation.list_sandbox_contents,
     "create_sandbox_folder": automation.create_sandbox_folder,
     "open_sandbox_folder_in_explorer": automation.open_sandbox_folder_in_explorer,
+    "send_email": automation.send_email,
 }
 
 RISKY_TOOLS = {
@@ -254,4 +270,5 @@ RISKY_TOOLS = {
     "delete_file": True,
     "open_application": True,
     "create_sandbox_folder": True,
+    "send_email": True,
 }
