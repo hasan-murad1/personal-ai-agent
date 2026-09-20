@@ -3,7 +3,7 @@ import memory
 import tools
 import voice
 
-MAX_TOOL_ITERATIONS = 5
+MAX_TOOL_ITERATIONS = 7
 
 
 def main():

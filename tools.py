@@ -262,6 +262,33 @@ TOOL_SCHEMAS = [
                 "required": ["subject", "body"]
             }
         }
+    },
+        {
+        "type": "function",
+        "function": {
+            "name": "list_upcoming_events",
+            "description": "List the user's next 5 upcoming events from Google Calendar.",
+            "parameters": {
+                "type": "object",
+                "properties": {}
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "create_calendar_event",
+            "description": "Create a new event or reminder on the user's Google Calendar. Use ISO datetime format like '2026-09-25T14:00:00'.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "summary": {"type": "string", "description": "Title of the event"},
+                    "start_datetime": {"type": "string", "description": "Start time in ISO format, e.g. '2026-09-25T14:00:00'"},
+                    "end_datetime": {"type": "string", "description": "End time in ISO format, e.g. '2026-09-25T15:00:00'"}
+                },
+                "required": ["summary", "start_datetime", "end_datetime"]
+            }
+        }
     }
 ]
 
@@ -278,6 +305,8 @@ AVAILABLE_FUNCTIONS = {
     "open_sandbox_folder_in_explorer": automation.open_sandbox_folder_in_explorer,
     "open_youtube_search": automation.open_youtube_search,
     "send_email": automation.send_email,
+    "list_upcoming_events": automation.list_upcoming_events,
+    "create_calendar_event": automation.create_calendar_event,
 }
 
 RISKY_TOOLS = {
@@ -286,4 +315,5 @@ RISKY_TOOLS = {
     "open_application": True,
     "create_sandbox_folder": True,
     "send_email": True,
+    "create_calendar_event": True,
 }

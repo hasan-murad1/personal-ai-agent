@@ -4,6 +4,12 @@ import webbrowser
 import smtplib
 from email.mime.text import MIMEText
 from dotenv import load_dotenv
+from google.auth.transport.requests import Request
+from google.oauth2.credentials import Credentials
+from google_auth_oauthlib.flow import InstalledAppFlow
+from googleapiclient.discovery import build
+
+CALENDAR_SCOPES = ["https://www.googleapis.com/auth/calendar"]
 
 load_dotenv()
 
@@ -106,3 +112,59 @@ def send_email(subject: str, body: str) -> str:
         return f"Email sent to {ALLOWED_RECIPIENT} with subject '{subject}' and body: {body}"
     except Exception as e:
         return f"Error sending email: {e}"
+def _get_calendar_service():
+    creds = None
+
+    if os.path.exists("token.json"):
+        creds = Credentials.from_authorized_user_file("token.json", CALENDAR_SCOPES)
+
+    if not creds or not creds.valid:
+        if creds and creds.expired and creds.refresh_token:
+            creds.refresh(Request())
+        else:
+            flow = InstalledAppFlow.from_client_secrets_file("credentials.json", CALENDAR_SCOPES)
+            creds = flow.run_local_server(port=0)
+
+        with open("token.json", "w") as token_file:
+            token_file.write(creds.to_json())
+
+    return build("calendar", "v3", credentials=creds)
+
+
+def list_upcoming_events() -> str:
+    """List the next 5 upcoming events from the user's Google Calendar."""
+    try:
+        service = _get_calendar_service()
+        events_result = service.events().list(
+            calendarId="primary",
+            maxResults=5,
+            singleEvents=True,
+            orderBy="startTime"
+        ).execute()
+
+        events = events_result.get("items", [])
+        if not events:
+            return "No upcoming events found."
+
+        output = []
+        for event in events:
+            start = event["start"].get("dateTime", event["start"].get("date"))
+            output.append(f"{start} - {event['summary']}")
+        return "\n".join(output)
+    except Exception as e:
+        return f"Error listing events: {e}"
+
+
+def create_calendar_event(summary: str, start_datetime: str, end_datetime: str) -> str:
+    """Create a new event on the user's Google Calendar."""
+    try:
+        service = _get_calendar_service()
+        event = {
+            "summary": summary,
+            "start": {"dateTime": start_datetime, "timeZone": "Asia/Dhaka"},
+            "end": {"dateTime": end_datetime, "timeZone": "Asia/Dhaka"},
+        }
+        created_event = service.events().insert(calendarId="primary", body=event).execute()
+        return f"Event '{summary}' created successfully from {start_datetime} to {end_datetime}. Link: {created_event.get('htmlLink')}"
+    except Exception as e:
+        return f"Error creating event: {e}"
