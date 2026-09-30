@@ -4,9 +4,9 @@ import ast
 import operator
 import rag
 import automation
+import data_analysis
 
 WORKSPACE_DIR = "agent_workspace"
-
 os.makedirs(WORKSPACE_DIR, exist_ok=True)
 
 
@@ -14,15 +14,13 @@ def _safe_path(filename: str) -> str:
     """Resolve a filename to an absolute path inside the workspace, blocking any attempt to escape it."""
     full_path = os.path.abspath(os.path.join(WORKSPACE_DIR, filename))
     workspace_abs = os.path.abspath(WORKSPACE_DIR)
-
     if not full_path.startswith(workspace_abs):
         raise ValueError("Access outside the workspace folder is not allowed.")
-
     return full_path
 
 
 def write_file(filename: str, content: str) -> str:
-    """Create or overwrite a file inside the workspace. Returns the actual content written, to prevent the model from hallucinating a different summary."""
+    """Create or overwrite a file inside the workspace."""
     try:
         path = _safe_path(filename)
         with open(path, "w", encoding="utf-8") as f:
@@ -53,17 +51,13 @@ def list_workspace_files() -> str:
 
 
 ALLOWED_OPERATORS = {
-    ast.Add: operator.add,
-    ast.Sub: operator.sub,
-    ast.Mult: operator.mul,
-    ast.Div: operator.truediv,
-    ast.Pow: operator.pow,
-    ast.USub: operator.neg,
+    ast.Add: operator.add, ast.Sub: operator.sub, ast.Mult: operator.mul,
+    ast.Div: operator.truediv, ast.Pow: operator.pow, ast.USub: operator.neg,
 }
 
 
 def _safe_eval(node):
-    """Recursively evaluate a parsed math expression, allowing only a fixed set of safe operators (no eval())."""
+    """Recursively evaluate a parsed math expression, allowing only safe operators."""
     if isinstance(node, ast.Constant):
         return node.value
     elif isinstance(node, ast.BinOp):
@@ -81,7 +75,7 @@ def _safe_eval(node):
 
 
 def calculator(expression: str) -> str:
-    """Safely evaluate a basic math expression without using Python's eval()."""
+    """Safely evaluate a basic math expression without using eval()."""
     try:
         tree = ast.parse(expression, mode="eval")
         result = _safe_eval(tree.body)
@@ -91,205 +85,112 @@ def calculator(expression: str) -> str:
 
 
 def get_current_datetime() -> str:
-    """Return the current date and time as a formatted string."""
+    """Return the current date and time."""
     return datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
 
 TOOL_SCHEMAS = [
-    {
-        "type": "function",
-        "function": {
-            "name": "calculator",
-            "description": "Evaluate a basic math expression (add, subtract, multiply, divide, power).",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "expression": {
-                        "type": "string",
-                        "description": "Math expression, e.g. '2 + 2 * 3'"
-                    }
-                },
-                "required": ["expression"]
-            }
-        }
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "get_current_datetime",
-            "description": "Get the current date and time.",
-            "parameters": {
-                "type": "object",
-                "properties": {}
-            }
-        }
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "search_documents",
-            "description": "Search the user's personal documents (PDFs, DOCX files) for relevant information. Use this when the user asks a question that might be answered by their uploaded documents.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "query": {
-                        "type": "string",
-                        "description": "The search query or question to look up in the documents."
-                    }
-                },
-                "required": ["query"]
-            }
-        }
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "write_file",
-            "description": "Create or overwrite a text file inside the agent's workspace folder.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "filename": {"type": "string", "description": "Name of the file, e.g. 'notes.txt'"},
-                    "content": {"type": "string", "description": "Text content to write into the file"}
-                },
-                "required": ["filename", "content"]
-            }
-        }
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "delete_file",
-            "description": "Delete a file from the agent's workspace folder.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "filename": {"type": "string", "description": "Name of the file to delete"}
-                },
-                "required": ["filename"]
-            }
-        }
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "list_workspace_files",
-            "description": "List all files currently in the agent's workspace folder.",
-            "parameters": {
-                "type": "object",
-                "properties": {}
-            }
-        }
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "open_application",
-            "description": "Open an allowed application (notepad or calculator).",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "app_name": {"type": "string", "description": "Name of the app to open: 'notepad' or 'calculator'"}
-                },
-                "required": ["app_name"]
-            }
-        }
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "list_sandbox_contents",
-            "description": "List files and folders inside the automation sandbox.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "subfolder": {"type": "string", "description": "Optional subfolder path within the sandbox, leave empty for root"}
-                },
-                "required": []
-            }
-        }
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "create_sandbox_folder",
-            "description": "Create a new folder inside the automation sandbox.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "folder_name": {"type": "string", "description": "Name of the new folder to create"}
-                },
-                "required": ["folder_name"]
-            }
-        }
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "open_sandbox_folder_in_explorer",
-            "description": "Open the automation sandbox folder in Windows File Explorer so the user can see its contents.",
-            "parameters": {
-                "type": "object",
-                "properties": {}
-            }
-        }
-    },
-        {
-        "type": "function",
-        "function": {
-            "name": "open_youtube_search",
-            "description": "Open YouTube search results in the browser for a given query.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "query": {"type": "string", "description": "What to search for on YouTube"}
-                },
-                "required": ["query"]
-            }
-        }
-    },
-        {
-        "type": "function",
-        "function": {
-            "name": "send_email",
-            "description": "Send an email to the pre-approved recipient. Use only when the user explicitly asks to send an email.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "subject": {"type": "string", "description": "Email subject line"},
-                    "body": {"type": "string", "description": "Email body content"}
-                },
-                "required": ["subject", "body"]
-            }
-        }
-    },
-        {
-        "type": "function",
-        "function": {
-            "name": "list_upcoming_events",
-            "description": "List the user's next 5 upcoming events from Google Calendar.",
-            "parameters": {
-                "type": "object",
-                "properties": {}
-            }
-        }
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "create_calendar_event",
-            "description": "Create a new event or reminder on the user's Google Calendar. Use ISO datetime format like '2026-09-25T14:00:00'.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "summary": {"type": "string", "description": "Title of the event"},
-                    "start_datetime": {"type": "string", "description": "Start time in ISO format, e.g. '2026-09-25T14:00:00'"},
-                    "end_datetime": {"type": "string", "description": "End time in ISO format, e.g. '2026-09-25T15:00:00'"}
-                },
-                "required": ["summary", "start_datetime", "end_datetime"]
-            }
-        }
-    }
+    {"type": "function", "function": {
+        "name": "calculator",
+        "description": "Evaluate a basic math expression (add, subtract, multiply, divide, power).",
+        "parameters": {"type": "object", "properties": {
+            "expression": {"type": "string", "description": "Math expression, e.g. '2 + 2 * 3'"}
+        }, "required": ["expression"]}
+    }},
+    {"type": "function", "function": {
+        "name": "get_current_datetime",
+        "description": "Get the current date and time.",
+        "parameters": {"type": "object", "properties": {}}
+    }},
+    {"type": "function", "function": {
+        "name": "search_documents",
+        "description": "Search the user's personal documents (PDFs, DOCX files) for relevant information.",
+        "parameters": {"type": "object", "properties": {
+            "query": {"type": "string", "description": "The search query or question to look up."}
+        }, "required": ["query"]}
+    }},
+    {"type": "function", "function": {
+        "name": "write_file",
+        "description": "Create or overwrite a text file inside the agent's workspace folder.",
+        "parameters": {"type": "object", "properties": {
+            "filename": {"type": "string", "description": "Name of the file, e.g. 'notes.txt'"},
+            "content": {"type": "string", "description": "Text content to write into the file"}
+        }, "required": ["filename", "content"]}
+    }},
+    {"type": "function", "function": {
+        "name": "delete_file",
+        "description": "Delete a file from the agent's workspace folder.",
+        "parameters": {"type": "object", "properties": {
+            "filename": {"type": "string", "description": "Name of the file to delete"}
+        }, "required": ["filename"]}
+    }},
+    {"type": "function", "function": {
+        "name": "list_workspace_files",
+        "description": "List all files currently in the agent's workspace folder.",
+        "parameters": {"type": "object", "properties": {}}
+    }},
+    {"type": "function", "function": {
+        "name": "open_application",
+        "description": "Open an allowed application (notepad or calculator).",
+        "parameters": {"type": "object", "properties": {
+            "app_name": {"type": "string", "description": "Name of the app to open: 'notepad' or 'calculator'"}
+        }, "required": ["app_name"]}
+    }},
+    {"type": "function", "function": {
+        "name": "list_sandbox_contents",
+        "description": "List files and folders inside the automation sandbox.",
+        "parameters": {"type": "object", "properties": {
+            "subfolder": {"type": "string", "description": "Optional subfolder path, leave empty for root"}
+        }, "required": []}
+    }},
+    {"type": "function", "function": {
+        "name": "create_sandbox_folder",
+        "description": "Create a new folder inside the automation sandbox.",
+        "parameters": {"type": "object", "properties": {
+            "folder_name": {"type": "string", "description": "Name of the new folder to create"}
+        }, "required": ["folder_name"]}
+    }},
+    {"type": "function", "function": {
+        "name": "open_sandbox_folder_in_explorer",
+        "description": "Open the automation sandbox folder in Windows File Explorer.",
+        "parameters": {"type": "object", "properties": {}}
+    }},
+    {"type": "function", "function": {
+        "name": "open_youtube_search",
+        "description": "Open YouTube search results in the browser for a given query.",
+        "parameters": {"type": "object", "properties": {
+            "query": {"type": "string", "description": "What to search for on YouTube"}
+        }, "required": ["query"]}
+    }},
+    {"type": "function", "function": {
+        "name": "send_email",
+        "description": "Send an email to the pre-approved recipient.",
+        "parameters": {"type": "object", "properties": {
+            "subject": {"type": "string", "description": "Email subject line"},
+            "body": {"type": "string", "description": "Email body content"}
+        }, "required": ["subject", "body"]}
+    }},
+    {"type": "function", "function": {
+        "name": "list_upcoming_events",
+        "description": "List the user's next 5 upcoming events from Google Calendar.",
+        "parameters": {"type": "object", "properties": {}}
+    }},
+    {"type": "function", "function": {
+        "name": "create_calendar_event",
+        "description": "Create a new event or reminder on the user's Google Calendar. Use ISO datetime format like '2026-09-25T14:00:00'.",
+        "parameters": {"type": "object", "properties": {
+            "title": {"type": "string", "description": "The event's title or name"},
+            "start_datetime": {"type": "string", "description": "Start time in ISO format, e.g. '2026-09-25T14:00:00'"},
+            "end_datetime": {"type": "string", "description": "End time in ISO format, e.g. '2026-09-25T15:00:00'"}
+        }, "required": ["title", "start_datetime", "end_datetime"]}
+    }},
+    {"type": "function", "function": {
+        "name": "summarize_data_file",
+        "description": "Analyze a CSV or Excel file from the documents folder and return a summary including row count, columns, and statistics.",
+        "parameters": {"type": "object", "properties": {
+            "filename": {"type": "string", "description": "Name of the CSV or Excel file, e.g. 'sales_data.csv'"}
+        }, "required": ["filename"]}
+    }},
 ]
 
 AVAILABLE_FUNCTIONS = {
@@ -307,6 +208,7 @@ AVAILABLE_FUNCTIONS = {
     "send_email": automation.send_email,
     "list_upcoming_events": automation.list_upcoming_events,
     "create_calendar_event": automation.create_calendar_event,
+    "summarize_data_file": data_analysis.summarize_data_file,
 }
 
 RISKY_TOOLS = {

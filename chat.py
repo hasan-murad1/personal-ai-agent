@@ -2,18 +2,69 @@ import ollama
 import memory
 import tools
 import voice
+import os
+import json
+from dotenv import load_dotenv
+from groq import Groq
+
+load_dotenv()
+
+LLM_PROVIDER = "groq"  # "ollama" or "groq"
+
+groq_client = Groq(api_key=os.environ.get("GROQ_API_KEY")) if LLM_PROVIDER == "groq" else None
+GROQ_MODEL = "qwen/qwen3.8-27b"
+OLLAMA_MODEL = "qwen3:4b"
 
 MAX_TOOL_ITERATIONS = 7
 
 
-def main():
-    """Run the main voice-based conversation loop: record, transcribe, reason with tool-calling, and speak the response."""
-    memory.init_db()
+def call_llm(messages, use_tools=True):
+    """Call the configured LLM provider (Ollama or Groq) through a unified interface."""
+    if LLM_PROVIDER == "groq":
+        kwargs = {"model": GROQ_MODEL, "messages": messages}
+        if use_tools:
+            kwargs["tools"] = tools.TOOL_SCHEMAS
 
-    print("Personal AI Agent (voice mode) - press Ctrl+C to quit\n")
+        response = groq_client.chat.completions.create(**kwargs)
+        message = response.choices[0].message
+
+        tool_calls = None
+        if message.tool_calls:
+            tool_calls = []
+            for tc in message.tool_calls:
+                try:
+                    parsed_args = json.loads(tc.function.arguments)
+                except (json.JSONDecodeError, TypeError):
+                    parsed_args = {}
+                tool_calls.append({
+                    "id": tc.id,
+                    "type": "function",
+                    "function": {
+                        "name": tc.function.name,
+                        "arguments": tc.function.arguments
+                    },
+                    "_parsed_arguments": parsed_args
+                })
+
+        return {
+            "role": "assistant",
+            "content": message.content,
+            "tool_calls": tool_calls
+        }
+    else:
+        kwargs = {"model": OLLAMA_MODEL, "messages": messages}
+        if use_tools:
+            kwargs["tools"] = tools.TOOL_SCHEMAS
+        response = ollama.chat(**kwargs)
+        return response["message"]
+
+
+def main():
+    """Run the main voice-based conversation loop."""
+    memory.init_db()
+    print(f"Personal AI Agent (voice mode, provider: {LLM_PROVIDER}) - press Ctrl+C to quit\n")
 
     conversation_history = memory.load_history(limit=20)
-
     if conversation_history:
         print("(Previous conversation loaded)\n")
 
@@ -39,34 +90,31 @@ def main():
 
         while iterations < MAX_TOOL_ITERATIONS:
             iterations += 1
-
-            response = ollama.chat(
-                model="qwen3:4b",
-                messages=conversation_history,
-                tools=tools.TOOL_SCHEMAS
-            )
-
-            message = response["message"]
+            message = call_llm(conversation_history, use_tools=True)
 
             if not message.get("tool_calls"):
-                content = message["content"]
+                content = message.get("content") or ""
 
-                if '"function"' in content or "tool_call" in content.lower():
+                if content and ('"function"' in content or "tool_call" in content.lower()):
                     conversation_history.append({"role": "assistant", "content": content})
                     conversation_history.append({
                         "role": "user",
-                        "content": "That did not run as a real tool call. Please use the actual tool-calling mechanism, one tool at a time, not text."
+                        "content": "That did not run as a real tool call. Please use the actual tool-calling mechanism."
                     })
                     continue
 
-                assistant_reply = content
+                assistant_reply = content or "I'm not sure how to respond to that."
                 break
 
             conversation_history.append(message)
 
             for tool_call in message["tool_calls"]:
                 function_name = tool_call["function"]["name"]
-                function_args = tool_call["function"]["arguments"]
+
+                if LLM_PROVIDER == "groq":
+                    function_args = tool_call.get("_parsed_arguments", {})
+                else:
+                    function_args = tool_call["function"]["arguments"]
 
                 is_risky = tools.RISKY_TOOLS.get(function_name, False)
 
@@ -81,6 +129,7 @@ def main():
                         print("   -> Cancelled.\n")
                         conversation_history.append({
                             "role": "tool",
+                            "tool_call_id": tool_call.get("id", ""),
                             "content": str(function_result)
                         })
                         continue
@@ -100,11 +149,13 @@ def main():
 
                 conversation_history.append({
                     "role": "tool",
+                    "tool_call_id": tool_call.get("id", ""),
                     "content": str(function_result)
                 })
 
         if assistant_reply is None:
-            assistant_reply = "I reached the maximum number of steps trying to complete this. Could you simplify the request?"
+            final_message = call_llm(conversation_history, use_tools=False)
+            assistant_reply = final_message.get("content") or "I reached the maximum number of steps trying to complete this."
 
         print(f"Agent: {assistant_reply}\n")
         voice.speak_text(assistant_reply)
