@@ -65,6 +65,20 @@ def main():
     print(f"Personal AI Agent (voice mode, provider: {LLM_PROVIDER}) - press Ctrl+C to quit\n")
 
     conversation_history = memory.load_history(limit=20)
+    if not conversation_history:
+        conversation_history.append({
+            "role": "system",
+            "content": (
+                "You are a personal AI assistant with access to tools for real actions "
+                "(file operations, calendar, email, applications). "
+                "CRITICAL RULE: You must NEVER claim an action was completed (created, "
+                "deleted, sent, saved) unless you actually called the corresponding tool "
+                "and received its result. If you have not called a tool, you have not "
+                "done the action — say so honestly instead of guessing or assuming success. "
+                "For any request to delete, send, or modify something, you must call the "
+                "relevant tool, not just respond with text."
+            )
+        })
     if conversation_history:
         print("(Previous conversation loaded)\n")
 
