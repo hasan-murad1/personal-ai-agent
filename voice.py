@@ -5,6 +5,8 @@ import scipy.io.wavfile as wavfile
 import re
 from faster_whisper import WhisperModel
 from piper import PiperVoice
+import keyboard
+import time
 
 SAMPLE_RATE = 16000
 TEMP_AUDIO_FILE = "temp_recording.wav"
@@ -66,9 +68,9 @@ def clean_text_for_speech(text):
 
 
 def speak_text(text):
-    """Convert text to speech using Piper and play it through the speakers."""
+    """Convert text to speech using Piper and play it, allowing the user to skip playback by pressing Space."""
     clean_text = clean_text_for_speech(text)
-    print(f"[Speaking]: {clean_text}")
+    print(f"[Speaking - press SPACE to skip]: {clean_text}")
 
     audio_chunks = []
     for audio_chunk in tts_voice.synthesize(clean_text):
@@ -76,12 +78,10 @@ def speak_text(text):
 
     full_audio = np.concatenate(audio_chunks)
     sd_playback.play(full_audio, samplerate=tts_voice.config.sample_rate)
-    sd_playback.wait()
 
-
-if __name__ == "__main__":
-    audio_file = record_audio()
-    text = transcribe_audio(audio_file)
-    print(f"\nTranscribed text: {text}")
-
-    speak_text(f"You said: {text}")
+    while sd_playback.get_stream() and sd_playback.get_stream().active:
+        if keyboard.is_pressed('space'):
+            sd_playback.stop()
+            print("(Speech skipped)")
+            break
+        time.sleep(0.05)
