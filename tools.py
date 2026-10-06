@@ -5,6 +5,7 @@ import operator
 import rag
 import automation
 import data_analysis
+import action_logger
 
 WORKSPACE_DIR = "agent_workspace"
 os.makedirs(WORKSPACE_DIR, exist_ok=True)
@@ -191,6 +192,19 @@ TOOL_SCHEMAS = [
             "filename": {"type": "string", "description": "Name of the CSV or Excel file, e.g. 'sales_data.csv'"}
         }, "required": ["filename"]}
     }},
+
+        {"type": "function", "function": {
+        "name": "delete_calendar_event",
+        "description": "Find and delete an upcoming calendar event by matching its title.",
+        "parameters": {"type": "object", "properties": {
+            "event_title": {"type": "string", "description": "Title or partial title of the event to delete"}
+        }, "required": ["event_title"]}
+    }},
+        {"type": "function", "function": {
+        "name": "get_recent_actions",
+        "description": "Show a log of the agent's most recent tool actions, including whether they were risky and confirmed.",
+        "parameters": {"type": "object", "properties": {}}
+    }},
 ]
 
 AVAILABLE_FUNCTIONS = {
@@ -209,6 +223,8 @@ AVAILABLE_FUNCTIONS = {
     "list_upcoming_events": automation.list_upcoming_events,
     "create_calendar_event": automation.create_calendar_event,
     "summarize_data_file": data_analysis.summarize_data_file,
+    "delete_calendar_event": automation.delete_calendar_event,
+    "get_recent_actions": action_logger.get_recent_actions,
 }
 
 RISKY_TOOLS = {
@@ -218,4 +234,5 @@ RISKY_TOOLS = {
     "create_sandbox_folder": True,
     "send_email": True,
     "create_calendar_event": True,
+    "delete_calendar_event": True,
 }

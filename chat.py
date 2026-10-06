@@ -2,6 +2,7 @@ import ollama
 import memory
 import tools
 import voice
+import action_logger
 import os
 import json
 from dotenv import load_dotenv
@@ -60,26 +61,29 @@ def call_llm(messages, use_tools=True):
 
 
 def main():
-    """Run the main voice-based conversation loop."""
+    """Run the main voice-based conversation loop: record, transcribe, reason with tool-calling, and speak the response."""
     memory.init_db()
+    action_logger.init_log_db()
+
     print(f"Personal AI Agent (voice mode, provider: {LLM_PROVIDER}) - press Ctrl+C to quit\n")
 
     conversation_history = memory.load_history(limit=20)
+
     if not conversation_history:
         conversation_history.append({
             "role": "system",
             "content": (
                 "You are a personal AI assistant with access to tools for real actions "
-                "(file operations, calendar, email, applications). "
-                "CRITICAL RULE: You must NEVER claim an action was completed (created, "
-                "deleted, sent, saved) unless you actually called the corresponding tool "
-                "and received its result. If you have not called a tool, you have not "
-                "done the action — say so honestly instead of guessing or assuming success. "
-                "For any request to delete, send, or modify something, you must call the "
-                "relevant tool, not just respond with text."
+                "(file operations, calendar, email, applications) and for retrieving real data "
+                "(document search, action logs, calendar listing). "
+                "CRITICAL RULE: You must NEVER claim an action was completed, or present any "
+                "specific data (like logs, file contents, or event lists), unless you actually "
+                "called the corresponding tool and are reporting its real result. "
+                "If you have not called a tool, you have no real information — say so honestly "
+                "instead of guessing, assuming, or inventing plausible-sounding details."
             )
         })
-    if conversation_history:
+    else:
         print("(Previous conversation loaded)\n")
 
     while True:
@@ -141,6 +145,7 @@ def main():
                     if confirm != "yes":
                         function_result = "Action cancelled by user. Do not retry without asking again."
                         print("   -> Cancelled.\n")
+                        action_logger.log_action(function_name, function_args, function_result, was_risky=True, was_confirmed=False)
                         conversation_history.append({
                             "role": "tool",
                             "tool_call_id": tool_call.get("id", ""),
@@ -160,6 +165,8 @@ def main():
                         function_result = f"Error running tool: {e}"
                 else:
                     function_result = f"Error: unknown tool '{function_name}'"
+
+                action_logger.log_action(function_name, function_args, function_result, was_risky=is_risky, was_confirmed=is_risky)
 
                 conversation_history.append({
                     "role": "tool",
