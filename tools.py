@@ -6,6 +6,7 @@ import rag
 import automation
 import data_analysis
 import action_logger
+import fact_memory
 
 WORKSPACE_DIR = "agent_workspace"
 os.makedirs(WORKSPACE_DIR, exist_ok=True)
@@ -205,6 +206,26 @@ TOOL_SCHEMAS = [
         "description": "Show a log of the agent's most recent tool actions, including whether they were risky and confirmed.",
         "parameters": {"type": "object", "properties": {}}
     }},
+        {"type": "function", "function": {
+        "name": "remember_fact",
+        "description": "Save a fact about the user to long-term memory. Call this ONLY when the user explicitly asks you to remember something (e.g. 'remember that...', 'save this'). Never call it on your own initiative.",
+        "parameters": {"type": "object", "properties": {
+            "fact": {"type": "string", "description": "The fact to remember, written as a short complete sentence, e.g. 'The user's exam is on October 20'"},
+            "category": {"type": "string", "description": "Short category such as preference, project, schedule, or general"}
+        }, "required": ["fact"]}
+    }},
+    {"type": "function", "function": {
+        "name": "recall_facts",
+        "description": "List all facts previously saved to long-term memory. Use when the user asks what you remember about them.",
+        "parameters": {"type": "object", "properties": {}}
+    }},
+    {"type": "function", "function": {
+        "name": "forget_fact",
+        "description": "Delete a saved fact matching a keyword. Call this ONLY when the user explicitly asks you to forget something.",
+        "parameters": {"type": "object", "properties": {
+            "keyword": {"type": "string", "description": "A distinctive word or phrase from the fact to delete"}
+        }, "required": ["keyword"]}
+    }},
 ]
 
 AVAILABLE_FUNCTIONS = {
@@ -225,6 +246,9 @@ AVAILABLE_FUNCTIONS = {
     "summarize_data_file": data_analysis.summarize_data_file,
     "delete_calendar_event": automation.delete_calendar_event,
     "get_recent_actions": action_logger.get_recent_actions,
+    "remember_fact": fact_memory.remember_fact,
+    "recall_facts": fact_memory.recall_facts,
+    "forget_fact": fact_memory.forget_fact,
 }
 
 RISKY_TOOLS = {
@@ -235,4 +259,6 @@ RISKY_TOOLS = {
     "send_email": True,
     "create_calendar_event": True,
     "delete_calendar_event": True,
+    "remember_fact": True,
+    "forget_fact": True,
 }
