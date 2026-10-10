@@ -10,3 +10,5 @@ automation_sandbox/
 temp_recording.wav
 *.onnx
 *.onnx.json
+credentials.json
+token.json
