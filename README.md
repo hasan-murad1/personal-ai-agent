@@ -1,22 +1,28 @@
+# Personal AI Agent
+
+A voice-controlled personal assistant I'm building to learn how AI agents actually work under the hood. You press Enter, talk to it, and it answers out loud. Behind that it can search my documents, look things up on the web, manage my calendar, send an email, and remember facts I ask it to keep.
+
+I'm a university student (Business Administration + AI), and this is a learning project. I built it one feature at a time, broke a lot of things along the way, and wrote down what I learned below.
 
 ## What it can do
 
-- Remembers conversations across sessions
-- Answers questions from personal documents, with source attribution
-- Analyzes CSV/Excel files and reports summary statistics
-- Decides on its own when a tool is needed, and chains multiple tools together for complex requests (capped at a fixed number of steps)
-- Asks for confirmation before any risky action; all file and automation access is sandboxed with path-traversal protection
-- Logs every tool execution to a local audit trail it can query on request
-- Opens allow-listed applications and YouTube search results
-- Sends email through a dedicated account, restricted to a single pre-approved recipient
-- Views, creates, and deletes Google Calendar events via OAuth
-- Can run entirely offline (Ollama) or switch to faster cloud inference (Groq) with one config line
-- Lets the user skip a response mid-speech instead of waiting it out
+- Talks by voice: push-to-talk recording, local speech-to-text (faster-whisper) and local text-to-speech (Piper). You can skip a reply mid-sentence with Space.
+- Remembers recent conversations across sessions, plus a separate list of long-term facts that it only saves when I explicitly ask it to ("remember that...") and deletes when I ask it to forget.
+- Answers questions from my own PDF and Word documents, and says which file the answer came from.
+- Searches the live web for current information such as news, prices, or who currently holds a position. Results come back as a short list of titles, snippets and links.
+- Summarizes CSV and Excel files (row counts, columns, basic statistics).
+- Views, creates and deletes Google Calendar events.
+- Sends email from a dedicated test account, but only to one pre-approved address.
+- Opens a small allow-list of apps (Notepad, Calculator) and YouTube search results.
+- Decides by itself when it needs a tool, and can chain several tools for one request, with a hard cap on the number of steps.
+- Asks me to type yes or no before anything risky (writing or deleting files, sending email, changing the calendar, saving or forgetting facts). This is keyboard only on purpose, so a misheard word can never approve an action.
+- Logs every tool call to a local audit trail that I can check later.
+- Runs fully offline with Ollama, or switches to Groq for much faster replies with one line of config.
 
 ## Setup
 
 ```bash
-git clone <your-repo-url>
+git clone https://github.com/hasan-murad1/personal-ai-agent.git
 cd personal-ai-agent
 
 python -m venv venv
@@ -30,55 +36,91 @@ python -m piper.download_voices en_US-lessac-medium
 python chat.py
 ```
 
-Email and calendar features require their own one-time setup (Gmail App Password in a `.env` file; a Google Cloud OAuth `credentials.json`) and are optional — the core agent works without them. Groq requires a free API key in `.env`; Ollama requires no external account.
+Secrets live in a `.env` file in the project root, which is never committed. Only the first one is needed if you use Groq; everything else is optional and the related feature simply reports that it is not configured.
+
+| Variable | What it is for |
+|---|---|
+| GROQ_API_KEY | Cloud LLM (free tier). Not needed with Ollama. |
+| TAVILY_API_KEY | Web search (free tier, no card needed). |
+| AGENT_EMAIL | The test Gmail account the agent sends from. |
+| AGENT_EMAIL_PASSWORD | A Gmail App Password for that account, not the real password. |
+| ALLOWED_RECIPIENT | The only address the agent is allowed to email. |
+
+For the calendar you also need a Google Cloud OAuth `credentials.json` in the project root. Run `python calendar_test.py` once to sign in; it saves a `token.json` that the agent reuses.
+
+The Groq model name in `chat.py` has to be a model that is available in your own Groq account.
+
+## Troubleshooting
+
+- The agent hears nothing or writes nonsense: run `python mic_test.py`. It records three seconds, prints the input level and plays it back. If the peak level is tiny, the problem is the microphone or Windows settings, not the code.
+- Calendar stops working: the Google token has expired. Delete `token.json` and run `python calendar_test.py` again.
 
 ## How it was built
 
-Built in phases, one capability at a time:
+One capability at a time:
 
 | Phase | What was added |
 |---|---|
 | 1 | Basic chat loop with Ollama |
-| 2 | Persistent memory (SQLite) |
-| 3 | Tool calling (calculator via `ast`, not `eval`; datetime) |
-| 4 | RAG as a tool the agent chooses to use |
-| 5 | Safety layer for risky tools, scoped to a sandboxed workspace |
-| 6 | Multi-step tool orchestration with a step limit |
-| 7 | Voice I/O (Whisper + Piper), later made skippable mid-response |
-| 8 | Scoped computer automation, allow-listed apps only |
-| 9 | Email, YouTube search, and Google Calendar (OAuth) integration |
-| 10 | CSV/Excel analysis, a swappable Ollama/Groq provider layer, and an action-logging audit trail |
+| 2 | Conversation memory (SQLite) |
+| 3 | Tool calling: a calculator built on `ast` instead of `eval`, and the date and time |
+| 4 | Document search (RAG) as a tool the agent chooses to use |
+| 5 | Safety layer for risky tools, with file access limited to a sandbox folder |
+| 6 | Multi-step tool use with a step limit |
+| 7 | Voice input and output, later made skippable mid-reply |
+| 8 | Limited computer automation, allow-listed apps only |
+| 9 | Email, YouTube search and Google Calendar |
+| 10 | CSV and Excel analysis, a switchable Ollama/Groq layer, and the action log |
+| 11 | Long-term fact memory, plus code-level checks against fake "done" replies |
+| 12 | Live web search, English-only transcription, and microphone silence detection |
 
 ## What I learned
 
-- **Small models can fake tool calls.** The model occasionally wrote JSON-like text directly into its response instead of using real function calling, silently bypassing the safety layer. Fixed with a detector that catches the pattern and forces a retry.
-- **Tool responses need to confirm what actually happened, not just that it succeeded.** A file-write tool that only said "success" let the model hallucinate its own content summary. Returning the actual written content fixed most of this.
-- **A model can claim success without ever calling a tool at all.** Separately from malformed tool calls, the model sometimes answered a delete/data request directly in text — confidently saying an event was deleted, or inventing a plausible-looking action log — without attempting any tool call, which silently bypassed confirmation entirely. This was a more dangerous failure mode than a malformed call, since nothing in the code flagged it. Fixed with an explicit system prompt rule: never claim an action or present data without having actually called the corresponding tool.
-- **OAuth is a different trust model than an API key.** Setting up Google Calendar access meant learning a consent screen, a desktop OAuth client, and a token that's requested once and refreshed afterward, instead of a single static credential.
-- **A blocking call can silently freeze an entire voice loop.** The first time the calendar tool needed a new OAuth permission, it opened a browser window in the background waiting for approval — and because the agent's flow is single-threaded, the whole app hung until that window was handled.
-- **Switching LLM providers exposes how much you relied on one API's exact shape.** Moving from Ollama to Groq broke on missing `role`, string-vs-object `tool_calls.arguments`, and missing `id`/`tool_call_id` fields — all differences invisible until tool-calling actually ran. A thin `call_llm()` abstraction isolated the rest of the app from these provider-specific details.
-- **Stopping TTS mid-sentence can glitch the audio output.** A tight polling loop checking for a skip key-press competed with the audio thread for CPU time, causing stutter. A small `time.sleep()` in the loop fixed it.
+Small models can fake tool calls. The local model sometimes wrote tool-call JSON as plain text instead of actually calling the tool, which quietly skipped my safety checks. A small detector now catches that and makes it try again.
+
+Tools should report what really happened, not just "success". When the file tool only said it had worked, the model invented its own summary of the content. Returning the exact text that was written fixed most of that.
+
+A model can claim it did something without doing anything. It told me events were deleted, facts were forgotten, and once showed me an action log it had made up, all without calling a single tool. A system prompt rule helped but did not stop it. What finally worked was checking my own message in code: if I ask it to delete, forget, send or remember something, the first model call is required to produce a real tool call. A second check catches replies that claim an action when no tool ran.
+
+"Use a tool" is not the same as "use the right tool". The model once answered "who is the prime minister of Bangladesh" from old training data. Forcing it to call any tool was not enough, since it could just check the clock and stop. For questions about current facts I now force the web search tool by name.
+
+Search results are untrusted text. A web page can contain instructions aimed at the AI, so results are clearly labelled as outside content that must never be treated as commands, and the agent is told never to put my personal details into a search.
+
+The agent's own words are not evidence. Many times it said something worked when it had not. I only trust the database, the action log, or the actual GitHub page.
+
+OAuth works differently from an API key. Google Calendar needed a consent screen, a desktop OAuth client and a token that refreshes itself, instead of one fixed key.
+
+One blocking call can freeze everything. The first time the calendar needed new permission it opened a browser window in the background, and the whole voice loop hung until I dealt with it.
+
+Switching LLM providers shows how much you depend on one API's exact format. Moving from Ollama to Groq broke on small differences in message fields. A thin `call_llm()` function keeps those details away from the rest of the code.
+
+A silent microphone looks exactly like bad speech recognition. I spent time suspecting Whisper and my own changes before measuring the input level and finding the mic was delivering almost nothing. Now I measure first, and the agent warns me when the recording is silent.
+
+Once something is pushed to GitHub, it stays in the history. My email address was hardcoded in an early commit. It is in `.env` now, but the old commit still has it, so I check for secrets before every push.
+
+A tight loop can make audio stutter. Checking for the skip key as fast as possible fought with the audio playback for CPU time. A tiny sleep in the loop fixed it.
 
 ## Known limitations
 
-- Tool-calling is less reliable than frontier models, especially across multiple steps, and varies noticeably between providers/models
-- CPU-only local inference is noticeably slower than cloud-based assistants; Groq trades that off for reduced privacy/offline capability
-- Only the last 20 messages are kept as context; no long-term fact memory yet
-- Speech recognition occasionally mishears uncommon words (e.g. "sandbox"); partially mitigated with a prompt hint
-- Email is restricted to a single hardcoded recipient by design, not general-purpose messaging
-- Calendar and email require one-time external setup (OAuth consent, App Password) and are not part of the zero-setup local core
+- Tool calling is less reliable than with frontier models, especially across several steps, and it varies a lot between models.
+- The code checks that force a tool call are pattern-based, so some requests will be missed and a few will be caught by mistake. They reduce the risk; they do not remove it.
+- Forcing tool calls only works with Groq; Ollama does not support it.
+- Local CPU-only inference is slow. Groq is much faster but sends my conversation to a cloud service, and web search sends the query to Tavily.
+- Only the last 20 messages are kept as conversation context.
+- Speech recognition sometimes mishears uncommon words, and it is set to English only.
+- Email can only go to one fixed recipient. That is on purpose.
+- If the calendar token is missing, the sign-in browser window can still block the voice loop.
 
 ## Ideas for later
 
-- Web search tool for real-time information lookup
-- Fact-based long-term memory, separate from raw conversation history
-- Wake-word activation instead of push-to-talk
-- LoRA/QLoRA fine-tuning experiments
+- A hands-free session mode: press Enter once, then talk back and forth with the end of each sentence detected automatically, and later a "Hey Jarvis" wake word
+- Moving the calendar sign-in completely out of the voice loop
+- LoRA or QLoRA fine-tuning experiments on a free cloud GPU
 
 ## License
 
-This project is licensed under the MIT License — see the [LICENSE](LICENSE) file for details.
+MIT, see the [LICENSE](LICENSE) file.
 
 ## Note
 
-This is a personal learning project, not production software. All file and automation actions are restricted to sandboxed folders and a small list of approved applications. Email and calendar access are scoped to a single test account/recipient.
+This is a personal learning project, not production software. File and automation actions stay inside sandbox folders and a short list of approved apps, and email and calendar access are limited to a single test account and recipient.
