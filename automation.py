@@ -21,7 +21,8 @@ ALLOWED_APPS = {
 
 AGENT_EMAIL = os.environ.get("AGENT_EMAIL")
 AGENT_EMAIL_PASSWORD = os.environ.get("AGENT_EMAIL_PASSWORD")
-ALLOWED_RECIPIENT = "stelonno@gmail.com"
+# The only address the agent may email. Kept in .env so it never appears in the public repository.
+ALLOWED_RECIPIENT = os.environ.get("ALLOWED_RECIPIENT")
 
 CALENDAR_SCOPES = ["https://www.googleapis.com/auth/calendar"]
 
@@ -92,6 +93,8 @@ def send_email(subject: str, body: str) -> str:
     """Send an email through the agent's dedicated test account, restricted to a single pre-approved recipient."""
     if not AGENT_EMAIL or not AGENT_EMAIL_PASSWORD:
         return "Error: email credentials are not configured."
+    if not ALLOWED_RECIPIENT:
+        return "Error: ALLOWED_RECIPIENT is not configured in .env, so no email was sent."
     try:
         msg = MIMEText(body)
         msg["Subject"] = subject
@@ -107,6 +110,7 @@ def send_email(subject: str, body: str) -> str:
 
 
 def _get_calendar_service():
+    """Build an authenticated Google Calendar client, refreshing the saved token when possible."""
     creds = None
     if os.path.exists("token.json"):
         creds = Credentials.from_authorized_user_file("token.json", CALENDAR_SCOPES)
@@ -153,3 +157,28 @@ def create_calendar_event(title: str, start_datetime: str, end_datetime: str) ->
         return f"Event '{title}' created successfully from {start_datetime} to {end_datetime}. Link: {created_event.get('htmlLink')}"
     except Exception as e:
         return f"Error creating event: {e}"
+
+
+def delete_calendar_event(event_title: str) -> str:
+    """Find and delete a calendar event by matching its title among upcoming events."""
+    try:
+        service = _get_calendar_service()
+        events_result = service.events().list(
+            calendarId="primary", maxResults=20, singleEvents=True, orderBy="startTime"
+        ).execute()
+        events = events_result.get("items", [])
+
+        matching_events = [e for e in events if event_title.lower() in e.get("summary", "").lower()]
+
+        if not matching_events:
+            return f"No upcoming event found matching '{event_title}'."
+
+        if len(matching_events) > 1:
+            titles = [e["summary"] for e in matching_events]
+            return f"Multiple matching events found: {titles}. Please be more specific."
+
+        event = matching_events[0]
+        service.events().delete(calendarId="primary", eventId=event["id"]).execute()
+        return f"Event '{event['summary']}' deleted successfully."
+    except Exception as e:
+        return f"Error deleting event: {e}"
