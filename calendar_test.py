@@ -1,73 +1,46 @@
+import os
 from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import InstalledAppFlow
-from googleapiclient.discovery import build
-import os
-import datetime
+import automation
 
-SCOPES = ["https://www.googleapis.com/auth/calendar"]
+TOKEN_FILE = automation.TOKEN_FILE
+SCOPES = automation.CALENDAR_SCOPES
 
 
-def get_calendar_service():
+def sign_in():
+    """Refresh the saved Google token, or open the browser sign-in if it is missing or can no longer be refreshed."""
     creds = None
+    if os.path.exists(TOKEN_FILE):
+        try:
+            creds = Credentials.from_authorized_user_file(TOKEN_FILE, SCOPES)
+        except Exception:
+            creds = None
 
-    if os.path.exists("token.json"):
-        creds = Credentials.from_authorized_user_file("token.json", SCOPES)
-
-    if not creds or not creds.valid:
-        if creds and creds.expired and creds.refresh_token:
-            creds.refresh(Request())
-        else:
-            flow = InstalledAppFlow.from_client_secrets_file("credentials.json", SCOPES)
-            creds = flow.run_local_server(port=0)
-
-        with open("token.json", "w") as token_file:
-            token_file.write(creds.to_json())
-
-    service = build("calendar", "v3", credentials=creds)
-    return service
-
-
-def list_upcoming_events():
-    service = get_calendar_service()
-
-    events_result = service.events().list(
-        calendarId="primary",
-        maxResults=5,
-        singleEvents=True,
-        orderBy="startTime"
-    ).execute()
-
-    events = events_result.get("items", [])
-
-    if not events:
-        print("No upcoming events found.")
+    if creds and creds.valid:
+        print("Saved token is still valid.")
         return
 
-    for event in events:
-        start = event["start"].get("dateTime", event["start"].get("date"))
-        print(f"{start} - {event['summary']}")
+    if creds and creds.expired and creds.refresh_token:
+        try:
+            creds.refresh(Request())
+            print("Token refreshed without a browser sign-in.")
+        except Exception:
+            print("Token could not be refreshed, a browser sign-in is needed.")
+            creds = None
 
+    if not creds or not creds.valid:
+        flow = InstalledAppFlow.from_client_secrets_file("credentials.json", SCOPES)
+        creds = flow.run_local_server(port=0)
+        print("Browser sign-in completed.")
 
-def create_event(summary, start_datetime, end_datetime):
-    service = get_calendar_service()
-
-    event = {
-        "summary": summary,
-        "start": {"dateTime": start_datetime, "timeZone": "Asia/Dhaka"},
-        "end": {"dateTime": end_datetime, "timeZone": "Asia/Dhaka"},
-    }
-
-    created_event = service.events().insert(calendarId="primary", body=event).execute()
-    return created_event.get("htmlLink")
+    with open(TOKEN_FILE, "w") as token_file:
+        token_file.write(creds.to_json())
+    print(f"Saved {TOKEN_FILE}.")
 
 
 if __name__ == "__main__":
-    list_upcoming_events()
-
-    link = create_event(
-        "Test Reminder from AI Agent",
-        "2026-09-20T15:00:00",
-        "2026-09-20T15:30:00"
-    )
-    print(f"\nEvent created: {link}")
+    # Standalone re-authentication script. It only signs in and lists events; it never creates or deletes anything.
+    sign_in()
+    print("\nNext upcoming events:")
+    print(automation.list_upcoming_events())
