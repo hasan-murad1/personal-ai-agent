@@ -2,12 +2,14 @@ import os
 import subprocess
 import webbrowser
 import smtplib
+import datetime
 from email.mime.text import MIMEText
 from dotenv import load_dotenv
+from google.auth.exceptions import RefreshError
 from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
-from google_auth_oauthlib.flow import InstalledAppFlow
 from googleapiclient.discovery import build
+from safe_paths import resolve_inside
 
 load_dotenv()
 
@@ -25,15 +27,25 @@ AGENT_EMAIL_PASSWORD = os.environ.get("AGENT_EMAIL_PASSWORD")
 ALLOWED_RECIPIENT = os.environ.get("ALLOWED_RECIPIENT")
 
 CALENDAR_SCOPES = ["https://www.googleapis.com/auth/calendar"]
+TOKEN_FILE = "token.json"
+CALENDAR_SIGN_IN_MESSAGE = (
+    "Google Calendar sign-in is needed. Tell the user to stop the agent and run "
+    "'python calendar_test.py' once in the terminal, then restart the agent."
+)
+
+
+def _now_rfc3339() -> str:
+    """Return the current time in the RFC 3339 format the Calendar API expects for timeMin."""
+    return datetime.datetime.now(datetime.timezone.utc).isoformat()
+
+
+class CalendarAuthError(Exception):
+    """Raised when the calendar token is missing or can no longer be refreshed without a browser sign-in."""
 
 
 def _safe_sandbox_path(relative_path: str) -> str:
     """Resolve a path to an absolute location inside the sandbox, blocking any attempt to escape it."""
-    full_path = os.path.abspath(os.path.join(SANDBOX_DIR, relative_path))
-    sandbox_abs = os.path.abspath(SANDBOX_DIR)
-    if not full_path.startswith(sandbox_abs):
-        raise ValueError("Access outside the automation sandbox is not allowed.")
-    return full_path
+    return resolve_inside(SANDBOX_DIR, relative_path)
 
 
 def open_application(app_name: str) -> str:
@@ -52,7 +64,7 @@ def list_sandbox_contents(subfolder: str = "") -> str:
     """List files and folders inside the automation sandbox."""
     try:
         path = _safe_sandbox_path(subfolder)
-        if not os.path.exists(path):
+        if not os.path.isdir(path):
             return f"Error: '{subfolder}' does not exist in the sandbox."
         items = os.listdir(path)
         if not items:
@@ -64,6 +76,8 @@ def list_sandbox_contents(subfolder: str = "") -> str:
 
 def create_sandbox_folder(folder_name: str) -> str:
     """Create a new folder inside the automation sandbox."""
+    if not folder_name or not folder_name.strip():
+        return "Error: folder name is empty."
     try:
         path = _safe_sandbox_path(folder_name)
         os.makedirs(path, exist_ok=True)
@@ -110,17 +124,26 @@ def send_email(subject: str, body: str) -> str:
 
 
 def _get_calendar_service():
-    """Build an authenticated Google Calendar client, refreshing the saved token when possible."""
-    creds = None
-    if os.path.exists("token.json"):
-        creds = Credentials.from_authorized_user_file("token.json", CALENDAR_SCOPES)
-    if not creds or not creds.valid:
-        if creds and creds.expired and creds.refresh_token:
+    """Build a Google Calendar client from the saved token, refreshing it silently when possible.
+
+    This never opens a browser. The browser sign-in would block the voice loop, so it only
+    happens in calendar_test.py, which the user runs by hand.
+    """
+    if not os.path.exists(TOKEN_FILE):
+        raise CalendarAuthError(CALENDAR_SIGN_IN_MESSAGE)
+    try:
+        creds = Credentials.from_authorized_user_file(TOKEN_FILE, CALENDAR_SCOPES)
+    except Exception:
+        raise CalendarAuthError(CALENDAR_SIGN_IN_MESSAGE)
+
+    if not creds.valid:
+        if not (creds.expired and creds.refresh_token):
+            raise CalendarAuthError(CALENDAR_SIGN_IN_MESSAGE)
+        try:
             creds.refresh(Request())
-        else:
-            flow = InstalledAppFlow.from_client_secrets_file("credentials.json", CALENDAR_SCOPES)
-            creds = flow.run_local_server(port=0)
-        with open("token.json", "w") as token_file:
+        except RefreshError:
+            raise CalendarAuthError(CALENDAR_SIGN_IN_MESSAGE)
+        with open(TOKEN_FILE, "w") as token_file:
             token_file.write(creds.to_json())
     return build("calendar", "v3", credentials=creds)
 
@@ -130,7 +153,7 @@ def list_upcoming_events() -> str:
     try:
         service = _get_calendar_service()
         events_result = service.events().list(
-            calendarId="primary", maxResults=5, singleEvents=True, orderBy="startTime"
+            calendarId="primary", timeMin=_now_rfc3339(), maxResults=5, singleEvents=True, orderBy="startTime"
         ).execute()
         events = events_result.get("items", [])
         if not events:
@@ -138,8 +161,10 @@ def list_upcoming_events() -> str:
         output = []
         for event in events:
             start = event["start"].get("dateTime", event["start"].get("date"))
-            output.append(f"{start} - {event['summary']}")
+            output.append(f"{start} - {event.get('summary', '(no title)')}")
         return "\n".join(output)
+    except CalendarAuthError as e:
+        return f"Error: {e}"
     except Exception as e:
         return f"Error listing events: {e}"
 
@@ -155,6 +180,8 @@ def create_calendar_event(title: str, start_datetime: str, end_datetime: str) ->
         }
         created_event = service.events().insert(calendarId="primary", body=event).execute()
         return f"Event '{title}' created successfully from {start_datetime} to {end_datetime}. Link: {created_event.get('htmlLink')}"
+    except CalendarAuthError as e:
+        return f"Error: {e} No event was created."
     except Exception as e:
         return f"Error creating event: {e}"
 
@@ -164,7 +191,7 @@ def delete_calendar_event(event_title: str) -> str:
     try:
         service = _get_calendar_service()
         events_result = service.events().list(
-            calendarId="primary", maxResults=20, singleEvents=True, orderBy="startTime"
+            calendarId="primary", timeMin=_now_rfc3339(), maxResults=20, singleEvents=True, orderBy="startTime"
         ).execute()
         events = events_result.get("items", [])
 
@@ -174,11 +201,13 @@ def delete_calendar_event(event_title: str) -> str:
             return f"No upcoming event found matching '{event_title}'."
 
         if len(matching_events) > 1:
-            titles = [e["summary"] for e in matching_events]
+            titles = [e.get("summary", "(no title)") for e in matching_events]
             return f"Multiple matching events found: {titles}. Please be more specific."
 
         event = matching_events[0]
         service.events().delete(calendarId="primary", eventId=event["id"]).execute()
-        return f"Event '{event['summary']}' deleted successfully."
+        return f"Event '{event.get('summary', '(no title)')}' deleted successfully."
+    except CalendarAuthError as e:
+        return f"Error: {e} No event was deleted."
     except Exception as e:
         return f"Error deleting event: {e}"
