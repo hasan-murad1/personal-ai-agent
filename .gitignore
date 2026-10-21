@@ -12,3 +12,4 @@ temp_recording.wav
 *.onnx.json
 credentials.json
 token.json
+token.json*
