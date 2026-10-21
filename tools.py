@@ -8,6 +8,7 @@ import data_analysis
 import action_logger
 import fact_memory
 import web_search
+from safe_paths import resolve_inside
 
 WORKSPACE_DIR = "agent_workspace"
 os.makedirs(WORKSPACE_DIR, exist_ok=True)
@@ -15,11 +16,7 @@ os.makedirs(WORKSPACE_DIR, exist_ok=True)
 
 def _safe_path(filename: str) -> str:
     """Resolve a filename to an absolute path inside the workspace, blocking any attempt to escape it."""
-    full_path = os.path.abspath(os.path.join(WORKSPACE_DIR, filename))
-    workspace_abs = os.path.abspath(WORKSPACE_DIR)
-    if not full_path.startswith(workspace_abs):
-        raise ValueError("Access outside the workspace folder is not allowed.")
-    return full_path
+    return resolve_inside(WORKSPACE_DIR, filename)
 
 
 def write_file(filename: str, content: str) -> str:

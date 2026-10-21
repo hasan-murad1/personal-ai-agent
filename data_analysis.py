@@ -1,18 +1,15 @@
 import os
 import pandas as pd
+from safe_paths import resolve_inside
 
 DOCUMENTS_DIR = "documents"
 
 
 def _find_data_file(filename: str) -> str:
     """Locate a CSV or Excel file inside the documents folder, blocking access outside it."""
-    full_path = os.path.abspath(os.path.join(DOCUMENTS_DIR, filename))
-    documents_abs = os.path.abspath(DOCUMENTS_DIR)
+    full_path = resolve_inside(DOCUMENTS_DIR, filename)
 
-    if not full_path.startswith(documents_abs):
-        raise ValueError("Access outside the documents folder is not allowed.")
-
-    if not os.path.exists(full_path):
+    if not os.path.isfile(full_path):
         raise FileNotFoundError(f"File '{filename}' not found in documents folder.")
 
     return full_path
@@ -38,7 +35,7 @@ def summarize_data_file(filename: str) -> str:
         summary = []
         summary.append(f"File: {filename}")
         summary.append(f"Rows: {len(df)}")
-        summary.append(f"Columns: {', '.join(df.columns)}")
+        summary.append(f"Columns: {', '.join(str(c) for c in df.columns)}")
         summary.append("\nNumeric column statistics:")
         summary.append(df.describe().to_string())
 
