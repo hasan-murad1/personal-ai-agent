@@ -1,3 +1,6 @@
+import collections
+import queue
+import time
 import sounddevice as sd
 import numpy as np
 import scipy.io.wavfile as wavfile
@@ -5,17 +8,31 @@ import re
 from faster_whisper import WhisperModel
 from piper import PiperVoice
 import keyboard
-import time
 
 SAMPLE_RATE = 16000
 TEMP_AUDIO_FILE = "temp_recording.wav"
 
-# None = Windows default input. Set a device number (from mic_scan.py) to force a specific microphone.
+# None = Windows default input. Set a device number to force a specific microphone.
 INPUT_DEVICE = None
 
+# Push-to-talk settings
 MIN_RECORDING_SECONDS = 0.3
 MAX_RECORDING_SECONDS = 60  # audio after this is dropped, so a forgotten recording cannot grow RAM forever
 SILENCE_PEAK_THRESHOLD = 300  # int16 peak below this means the microphone delivered almost nothing; set 0 to disable
+
+# Session mode settings (automatic end-of-speech detection)
+CHUNK_MS = 30
+CHUNK_SAMPLES = SAMPLE_RATE * CHUNK_MS // 1000  # 480 samples per chunk
+CALIBRATION_SECONDS = 1.0     # measure room noise at the start of a session
+NOISE_MULTIPLIER = 3.0        # speech must be this many times louder than the room noise
+MIN_SPEECH_RMS = 300          # never treat anything quieter than this as speech
+START_SPEECH_SECONDS = 0.15   # this much continuous loud audio starts an utterance
+PRE_ROLL_SECONDS = 0.3        # audio kept from just before speech started, so soft first sounds are not cut
+END_SILENCE_SECONDS = 1.2     # this much quiet after speech ends the utterance
+MAX_UTTERANCE_SECONDS = 30    # hard cap so noise can never keep recording forever
+IDLE_TIMEOUT_SECONDS = 60     # end the session if nobody speaks for this long
+QUEUE_MAX_CHUNKS = 200        # about 6 seconds; chunks are dropped if the loop falls behind, so RAM stays bounded
+SESSION_END_KEY = "esc"
 
 WHISPER_LANGUAGE = "en"
 WHISPER_INITIAL_PROMPT = (
@@ -40,6 +57,14 @@ def _input_device_name():
     except Exception:
         return "unknown device"
 
+
+def _rms(chunk):
+    """Return the root-mean-square loudness of an int16 audio chunk."""
+    samples = chunk.astype(np.float64)
+    return float(np.sqrt(np.mean(samples * samples))) if samples.size else 0.0
+
+
+# ---------------------------------------------------------------- push-to-talk
 
 def record_audio():
     """Record audio from the microphone using push-to-talk: Enter to start, Enter again to stop."""
@@ -86,12 +111,169 @@ def record_audio():
 
     if peak < SILENCE_PEAK_THRESHOLD:
         print("(Microphone is almost silent - check Windows mic permission, mute, input volume, "
-              "or run mic_scan.py to find the right INPUT_DEVICE)")
+              "or set INPUT_DEVICE)")
         return None
 
     wavfile.write(TEMP_AUDIO_FILE, SAMPLE_RATE, audio)
     return TEMP_AUDIO_FILE
 
+
+# ---------------------------------------------------------------- session mode
+
+class EndpointDetector:
+    """Decide from chunk loudness (RMS) when an utterance starts and when it has ended.
+
+    feed() returns None while nothing has finished, or a finished utterance as a numpy array.
+    """
+
+    def __init__(self, threshold):
+        self.threshold = threshold
+        self.start_chunks = max(1, int(START_SPEECH_SECONDS * 1000 / CHUNK_MS))
+        self.end_chunks = max(1, int(END_SILENCE_SECONDS * 1000 / CHUNK_MS))
+        self.max_chunks = int(MAX_UTTERANCE_SECONDS * 1000 / CHUNK_MS)
+        pre_roll_chunks = max(0, int(PRE_ROLL_SECONDS * 1000 / CHUNK_MS))
+        self.pre_roll = collections.deque(maxlen=pre_roll_chunks + self.start_chunks)
+        self.hit_max = False
+        self.reset()
+
+    def reset(self):
+        """Forget the current utterance and wait for new speech."""
+        self.in_speech = False
+        self.loud_run = 0
+        self.chunks = []
+        self.quiet_run = 0
+        self.pre_roll.clear()
+
+    def feed(self, chunk):
+        """Process one chunk and return a finished utterance, or None."""
+        loud = _rms(chunk) >= self.threshold
+
+        if not self.in_speech:
+            self.pre_roll.append(chunk)
+            self.loud_run = self.loud_run + 1 if loud else 0
+            if self.loud_run >= self.start_chunks:
+                self.in_speech = True
+                self.chunks = list(self.pre_roll)
+                self.quiet_run = 0
+            return None
+
+        self.chunks.append(chunk)
+        self.quiet_run = 0 if loud else self.quiet_run + 1
+
+        hit_max = len(self.chunks) >= self.max_chunks
+        if self.quiet_run >= self.end_chunks or hit_max:
+            speech = self.chunks[:-self.quiet_run] if self.quiet_run else self.chunks
+            utterance = np.concatenate(speech)
+            self.reset()
+            self.hit_max = hit_max
+            return utterance
+        return None
+
+
+def _open_session_stream(audio_queue, dropped):
+    """Open a microphone stream whose callback only copies chunks into a bounded queue."""
+    def callback(indata, frames, time_info, status):
+        # Keep the audio thread light: copy the chunk and hand it over, nothing else.
+        try:
+            audio_queue.put_nowait(indata[:, 0].copy())
+        except queue.Full:
+            dropped["count"] += 1
+
+    return sd.InputStream(samplerate=SAMPLE_RATE, channels=1, dtype="int16", device=INPUT_DEVICE,
+                          blocksize=CHUNK_SAMPLES, callback=callback)
+
+
+def calibrate_session():
+    """Measure the room noise for a moment and return the loudness threshold for speech, or None on failure."""
+    audio_queue = queue.Queue(maxsize=QUEUE_MAX_CHUNKS)
+    dropped = {"count": 0}
+    print(f"Calibrating room noise for {CALIBRATION_SECONDS:.0f} s - please stay quiet...")
+    try:
+        stream = _open_session_stream(audio_queue, dropped)
+    except Exception as e:
+        print(f"Could not open the microphone ({e}). Check INPUT_DEVICE in voice.py.")
+        return None
+
+    levels = []
+    stream.start()
+    try:
+        end_time = time.monotonic() + CALIBRATION_SECONDS
+        while time.monotonic() < end_time:
+            try:
+                levels.append(_rms(audio_queue.get(timeout=0.2)))
+            except queue.Empty:
+                pass
+    finally:
+        stream.stop()
+        stream.close()
+
+    noise = float(np.median(levels)) if levels else 0.0
+    threshold = max(noise * NOISE_MULTIPLIER, MIN_SPEECH_RMS)
+    print(f"Room noise RMS {noise:.0f} -> speech threshold {threshold:.0f}")
+    return threshold
+
+
+def listen_for_utterance(threshold):
+    """Listen until one utterance has ended, the session-end key is pressed, or nobody speaks for a while.
+
+    Returns (status, file_path): ("speech", path), ("end_key", None), ("idle", None) or ("error", None).
+    The microphone is only open inside this function, so it is off while the agent speaks or
+    while the user types a confirmation.
+    """
+    audio_queue = queue.Queue(maxsize=QUEUE_MAX_CHUNKS)
+    dropped = {"count": 0}
+    detector = EndpointDetector(threshold)
+
+    try:
+        stream = _open_session_stream(audio_queue, dropped)
+    except Exception as e:
+        print(f"Could not open the microphone ({e}). Check INPUT_DEVICE in voice.py.")
+        return "error", None
+
+    print(f"Listening... (speak, or press {SESSION_END_KEY.upper()} to end the session)")
+    stream.start()
+    utterance = None
+    status = "idle"
+    try:
+        last_activity = time.monotonic()
+        while True:
+            if keyboard.is_pressed(SESSION_END_KEY):
+                status = "end_key"
+                break
+            if not detector.in_speech and time.monotonic() - last_activity > IDLE_TIMEOUT_SECONDS:
+                status = "idle"
+                break
+            try:
+                chunk = audio_queue.get(timeout=0.1)
+            except queue.Empty:
+                continue
+
+            was_in_speech = detector.in_speech
+            utterance = detector.feed(chunk)
+            if detector.in_speech and not was_in_speech:
+                print("  (hearing you...)")
+            if detector.in_speech:
+                last_activity = time.monotonic()
+            if utterance is not None:
+                status = "speech"
+                break
+    finally:
+        stream.stop()
+        stream.close()
+
+    if dropped["count"]:
+        print(f"[Audio warning: {dropped['count']} chunks dropped]")
+    if status != "speech":
+        return status, None
+
+    peak = int(np.max(np.abs(utterance.astype(np.int32))))
+    reason = ", max length reached" if detector.hit_max else ""
+    print(f"  (got {len(utterance) / SAMPLE_RATE:.1f} s, peak {peak}{reason})")
+    wavfile.write(TEMP_AUDIO_FILE, SAMPLE_RATE, utterance)
+    return "speech", TEMP_AUDIO_FILE
+
+
+# ---------------------------------------------------------------- speech to text and text to speech
 
 def transcribe_audio(file_path):
     """Transcribe a recorded audio file to English text using Whisper."""

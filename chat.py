@@ -20,6 +20,10 @@ OLLAMA_MODEL = "qwen3:4b"
 
 MAX_TOOL_ITERATIONS = 7
 
+# True: press Enter once, then talk back and forth; the end of each sentence is detected automatically.
+# False: classic push-to-talk (Enter to start and Enter to stop every recording).
+SESSION_MODE = True
+
 BASE_SYSTEM_PROMPT = (
     "You are a personal AI assistant with access to tools for real actions "
     "(file operations, calendar, email, applications) and for retrieving real data "
@@ -71,6 +75,12 @@ ACTION_CLAIM_PATTERN = re.compile(
     re.IGNORECASE,
 )
 
+SESSION_END_REASONS = {
+    "end_key": "Esc pressed",
+    "idle": "no speech for a while",
+    "error": "microphone error",
+}
+
 
 def build_system_prompt():
     """Build the system prompt for this session, including any facts the user asked to be remembered."""
@@ -86,6 +96,20 @@ def wants_current_info(user_text):
         CURRENT_INFO_PATTERN.search(user_text) is not None
         and LOCAL_CONTEXT_PATTERN.search(user_text) is None
     )
+
+
+def flush_typed_keys():
+    """Throw away keys pressed earlier (Space, Esc, Enter), so they cannot leak into the next typed prompt.
+
+    This matters most for the risky-action confirmation: a stray buffered key must never become its answer.
+    Works on Windows; on other systems it does nothing.
+    """
+    try:
+        import msvcrt
+    except ImportError:
+        return
+    while msvcrt.kbhit():
+        msvcrt.getwch()
 
 
 def call_llm(messages, use_tools=True, force_tool=None):
@@ -149,12 +173,13 @@ def call_llm(messages, use_tools=True, force_tool=None):
 
 
 def main():
-    """Run the main voice-based conversation loop: record, transcribe, reason with tool-calling, and speak the response."""
+    """Run the main voice-based conversation loop: listen, transcribe, reason with tool-calling, and speak the response."""
     memory.init_db()
     action_logger.init_log_db()
     fact_memory.init_facts_db()
 
-    print(f"Personal AI Agent (voice mode, provider: {LLM_PROVIDER}) - press Ctrl+C to quit\n")
+    mode_name = "session mode" if SESSION_MODE else "push-to-talk"
+    print(f"Personal AI Agent (voice {mode_name}, provider: {LLM_PROVIDER}) - press Ctrl+C to quit\n")
 
     past_messages = memory.load_history(limit=20)
     if past_messages:
@@ -162,8 +187,28 @@ def main():
 
     conversation_history = [{"role": "system", "content": build_system_prompt()}] + past_messages
 
+    # Speech threshold of the active session; None means no session is running.
+    session_threshold = None
+
     while True:
-        audio_file = voice.record_audio()
+        if SESSION_MODE:
+            if session_threshold is None:
+                flush_typed_keys()
+                input("Press Enter to START a conversation session...")
+                session_threshold = voice.calibrate_session()
+                if session_threshold is None:
+                    continue
+                print("Session started. Talk normally; I answer after you pause. Press ESC to end the session.\n")
+
+            status, audio_file = voice.listen_for_utterance(session_threshold)
+            if status != "speech":
+                print(f"Session ended ({SESSION_END_REASONS.get(status, status)}).\n")
+                session_threshold = None
+                continue
+        else:
+            flush_typed_keys()
+            audio_file = voice.record_audio()
+
         user_input = voice.transcribe_audio(audio_file)
         print(f"You said: {user_input}")
 
@@ -171,7 +216,7 @@ def main():
             print("(No speech detected, try again)\n")
             continue
 
-        if user_input.lower().strip(".") == "exit":
+        if user_input.lower().strip(" .!") == "exit":
             print("Goodbye!")
             voice.speak_text("Goodbye!")
             break
@@ -245,7 +290,8 @@ def main():
                     print(f"\n⚠️  The agent wants to run a RISKY action:")
                     print(f"   Tool: {function_name}")
                     print(f"   Arguments: {function_args}")
-                    confirm = input("   Allow this? (yes/no): ").strip().lower()
+                    flush_typed_keys()
+                    confirm = input("   Allow this? Type yes and press Enter (anything else cancels): ").strip().lower()
 
                     if confirm != "yes":
                         function_result = "Action cancelled by user. Do not retry without asking again."
