@@ -43,6 +43,18 @@ class CalendarAuthError(Exception):
     """Raised when the calendar token is missing or can no longer be refreshed without a browser sign-in."""
 
 
+def _mask_email(address: str) -> str:
+    """Hide most of an email address (yourname@gmail.com -> yo***@gmail.com).
+
+    Tool results go to the LLM provider, the action log and the screen, so the full address never appears there.
+    """
+    if not address or "@" not in address:
+        return "the pre-approved recipient"
+    local, domain = address.split("@", 1)
+    visible = 2 if len(local) > 4 else 1  # never reveal most of a short name
+    return f"{local[:visible]}***@{domain}"
+
+
 def _safe_sandbox_path(relative_path: str) -> str:
     """Resolve a path to an absolute location inside the sandbox, blocking any attempt to escape it."""
     return resolve_inside(SANDBOX_DIR, relative_path)
@@ -118,9 +130,11 @@ def send_email(subject: str, body: str) -> str:
             server.starttls()
             server.login(AGENT_EMAIL, AGENT_EMAIL_PASSWORD)
             server.send_message(msg)
-        return f"Email sent to {ALLOWED_RECIPIENT} with subject '{subject}' and body: {body}"
+        return f"Email sent to {_mask_email(ALLOWED_RECIPIENT)} with subject '{subject}' and body: {body}"
     except Exception as e:
-        return f"Error sending email: {e}"
+        # Some SMTP errors include the recipient address, so mask it in the error text too.
+        error_text = str(e).replace(ALLOWED_RECIPIENT, _mask_email(ALLOWED_RECIPIENT))
+        return f"Error sending email: {error_text}"
 
 
 def _get_calendar_service():
