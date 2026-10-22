@@ -34,6 +34,10 @@ IDLE_TIMEOUT_SECONDS = 60     # end the session if nobody speaks for this long
 QUEUE_MAX_CHUNKS = 200        # about 6 seconds; chunks are dropped if the loop falls behind, so RAM stays bounded
 SESSION_END_KEY = "esc"
 
+# Text-to-speech settings
+MAX_SPOKEN_WORDS = 60        # longer replies are cut at a sentence boundary when spoken; the full text stays on screen
+SPOKEN_CUT_NOTE = "The full answer is on the screen."
+
 WHISPER_LANGUAGE = "en"
 WHISPER_INITIAL_PROMPT = (
     "A user talks to a personal AI assistant about files, calendar events, email, "
@@ -291,21 +295,56 @@ def transcribe_audio(file_path):
 
 
 def clean_text_for_speech(text):
-    """Strip markdown formatting and emoji from text before sending it to the TTS engine, since Piper reads them literally."""
-    text = re.sub(r'\*\*(.*?)\*\*', r'\1', text)
-    text = re.sub(r'\*(.*?)\*', r'\1', text)
+    """Turn a markdown reply into plain sentences for Piper, which would otherwise read symbols literally.
+
+    Removes headings, bullets, bold/italic markers, code ticks, links, URLs, emoji and a trailing
+    "(Sources: ...)" note. The full reply, with sources, is still printed on screen.
+    """
+    text = re.sub(r'\[([^\]]+)\]\([^)]*\)', r'\1', text)                # [label](url) -> label
+    text = re.sub(r'https?://\S+', '', text)                           # bare URLs
+    text = re.sub(r'\(\s*sources?\s*:[^)]*\)', '', text, flags=re.IGNORECASE)
+    text = re.sub(r'^\s*sources?\s*:.*$', '', text, flags=re.IGNORECASE | re.MULTILINE)
+    text = re.sub(r'^\s{0,3}#{1,6}\s*', '', text, flags=re.MULTILINE)   # headings
+    text = re.sub(r'^\s*(?:[*\-\u2022]|\d+[.)])\s+', '', text, flags=re.MULTILINE)  # bullets, numbered lists
+    text = re.sub(r'(\*\*|__)(.*?)\1', r'\2', text)                   # bold
+    text = re.sub(r'(?<!\w)[*_](\S(?:.*?\S)?)[*_](?!\w)', r'\1', text)  # italic
+    text = text.replace('`', '').replace('*', '')
     text = re.sub(
         r'[\U0001F300-\U0001FAFF\U00002600-\U000027BF\U0001F1E0-\U0001F1FF]',
         '',
         text
     )
+    # A heading or bullet line without final punctuation becomes its own sentence.
+    lines = [line.strip() for line in text.splitlines() if line.strip()]
+    lines = [line if line[-1] in '.!?:;' else line + '.' for line in lines]
+    text = ' '.join(lines)
     text = re.sub(r'\s+', ' ', text).strip()
     return text
 
 
+def shorten_for_speech(text, max_words=MAX_SPOKEN_WORDS):
+    """Keep only the first whole sentences that fit in max_words, so long replies are not read out in full."""
+    words = text.split()
+    if len(words) <= max_words:
+        return text
+    sentences = re.split(r'(?<=[.!?])\s+', text)
+    kept, count = [], 0
+    for sentence in sentences:
+        n = len(sentence.split())
+        if kept and count + n > max_words:
+            break
+        kept.append(sentence)
+        count += n
+    if count > max_words:  # a single very long first sentence
+        kept = [' '.join(words[:max_words]) + '...']
+    while len(kept) > 1 and len(kept[-1].split()) <= 4:  # do not end on a dangling heading such as "Career at Microsoft."
+        kept.pop()
+    return ' '.join(kept) + ' ' + SPOKEN_CUT_NOTE
+
+
 def speak_text(text):
     """Convert text to speech using Piper and play it, allowing the user to skip playback by pressing Space."""
-    clean_text = clean_text_for_speech(text)
+    clean_text = shorten_for_speech(clean_text_for_speech(text))
     if not clean_text:
         return
     print(f"[Speaking - press SPACE to skip]: {clean_text}")
