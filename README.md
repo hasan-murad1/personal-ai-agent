@@ -19,6 +19,26 @@ I'm a university student (Business Administration + AI). I built this one featur
 - Logs every tool call to a local audit trail.
 - Runs offline with Ollama, or switches to Groq for much faster replies with one line of config.
 
+## How it works
+
+1. The microphone opens and the agent waits for speech. It measures the room noise first, and decides I've finished when it hears about 1.2 seconds of quiet.
+2. Whisper turns the recording into text.
+3. The text goes to the LLM together with the list of tools. Before that, a few checks in code look at my words: if I asked for an action or for current facts, the model is required to call a real tool (the web search tool, for current facts).
+4. Each tool call runs in a loop of at most 7 steps. Risky tools stop and wait for me to type yes. Every call is written to the action log.
+5. The final answer is spoken with Piper, and the microphone opens again for the next turn.
+
+| File | What it does |
+|---|---|
+| chat.py | Main loop, LLM calls, tool loop and the safety checks |
+| voice.py | Microphone, end-of-speech detection, Whisper and Piper |
+| tools.py | Tool definitions and which tools count as risky |
+| safe_paths.py | The single path check every file tool goes through |
+| web_search.py | Tavily search with results labelled as untrusted |
+| automation.py | Apps, sandbox folders, email and Google Calendar |
+| rag.py, data_analysis.py | Document search (ChromaDB) and CSV/Excel summaries |
+| memory.py, fact_memory.py | Conversation history and saved facts (SQLite) |
+| action_logger.py | Audit log of every tool call |
+
 ## Setup
 
 ```bash
@@ -59,6 +79,16 @@ If it hears nothing or writes nonsense, run `python mic_test.py` to check the mi
 | 12 | Live web search and microphone silence detection |
 | 13 | Path-check and calendar sign-in fixes, then hands-free session mode |
 
+## How I test it
+
+There is no automated test suite yet; these are the checks I actually run.
+
+- `mic_test.py` records three seconds, prints the input level and plays it back, so I can tell a microphone problem from a code problem.
+- `vad_test.py` runs end-of-speech detection in my real room and reports CPU use while listening.
+- `calendar_test.py` signs in to Google and lists upcoming events. It never changes the calendar.
+
+I don't take the agent's word for anything. To confirm an action happened I check the action log, the database or the GitHub page. When I search for something and find nothing, I first search for something I know is there, so an empty result actually means something. For safety fixes I write the attack first, for example a path into `agent_workspace_evil`, show that the old code let it through, then show the new code blocks it, and run it again on Windows. For the forced web search I also check the opposite case: "what is the current time" must use the clock, not the web.
+
 ## What I learned
 
 The model will say it did something without doing it. It told me events were deleted and facts were forgotten, and once showed me an action log it had made up, all without calling a tool. A prompt rule helped but did not stop it. What worked was a check in code: if my message asks to delete, forget, send or remember, the model is required to make a real tool call.
@@ -88,6 +118,7 @@ Once something is pushed, it stays in the git history. My email was hardcoded in
 
 ## Ideas for later
 
+- Automated tests (pytest) for the path check, the end-of-speech detector and the tool-forcing patterns
 - A "Hey Jarvis" wake word in place of the first Enter
 - Shorter spoken answers, tuned for voice
 - LoRA or QLoRA fine-tuning experiments on a free cloud GPU
