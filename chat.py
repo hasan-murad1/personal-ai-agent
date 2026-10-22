@@ -43,13 +43,17 @@ BASE_SYSTEM_PROMPT = (
     "with no lists, tables or markdown. Give a longer, detailed answer only when the user asks for more detail. "
     "If a question or a follow-up (for example 'tell me more about him') needs facts you have not retrieved "
     "with a tool in this conversation, call web_search again instead of filling in details from memory. "
-    "Only name sources that a tool actually returned."
+    "Only name sources that a tool actually returned. "
+    "Your available tools are exactly the ones in the tool list you were given; never say a tool is missing "
+    "or unavailable without checking that list, and call the matching tool instead."
 )
 
 # Primary defense: if the USER's message asks for a state-changing action,
 # the first model call must produce a real tool call (Groq only).
 ACTION_INTENT_PATTERN = re.compile(
-    r"\b(?:forget|delete|remove|erase|send)\b|^\W*(?:please\s+)?remember\b",
+    r"\b(?:forget|delete|remove|erase|send)\b|^\W*(?:please\s+)?remember\b"
+    r"|\b(?:create|make|add|write|open|schedule)\b.{0,60}?\b(?:folders?|files?|events?|reminders?|"
+    r"meetings?|notepad|calculator|apps?|applications?)\b",
     re.IGNORECASE,
 )
 
@@ -345,7 +349,10 @@ def main():
                     except Exception as e:
                         function_result = f"Error running tool: {e}"
                 else:
-                    function_result = f"Error: unknown tool '{function_name}'"
+                    function_result = (
+                        f"Error: unknown tool '{function_name}'. "
+                        f"Available tools: {', '.join(sorted(tools.AVAILABLE_FUNCTIONS))}. Use one of these exact names."
+                    )
 
                 action_logger.log_action(function_name, function_args, function_result, was_risky=is_risky, was_confirmed=is_risky)
 
