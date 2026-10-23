@@ -4,6 +4,8 @@ import tools
 import voice
 import action_logger
 import fact_memory
+import dashboard
+import web_search
 import os
 import re
 import json
@@ -23,6 +25,11 @@ MAX_TOOL_ITERATIONS = 7
 # True: press Enter once, then talk back and forth; the end of each sentence is detected automatically.
 # False: classic push-to-talk (Enter to start and Enter to stop every recording).
 SESSION_MODE = True
+
+# Live dashboard: a read-only page on this computer (http://127.0.0.1:8765) that shows what the agent is doing.
+# It never controls the agent; risky actions are still approved by typing yes in the terminal.
+DASHBOARD_ENABLED = True
+DASHBOARD_OPEN_BROWSER = True
 
 BASE_SYSTEM_PROMPT = (
     "You are a personal AI assistant with access to tools for real actions "
@@ -138,6 +145,75 @@ def flush_typed_keys():
         msvcrt.getwch()
 
 
+# Plain-language descriptions of each tool for the dashboard: (icon, title, detail built from the arguments).
+# The email detail never contains the recipient address.
+TOOL_DISPLAY = {
+    "web_search": ("🔎", "Searching the live web", lambda a: f'"{a("query")}" · results treated as untrusted'),
+    "search_documents": ("📄", "Searching your documents", lambda a: f'"{a("query")}"'),
+    "summarize_data_file": ("📊", "Analysing a data file", lambda a: a("filename")),
+    "calculator": ("🧮", "Calculating", lambda a: a("expression")),
+    "get_current_datetime": ("🕒", "Checking the clock", lambda a: ""),
+    "write_file": ("📝", "Writing a file", lambda a: f'{a("filename")} in the agent workspace'),
+    "delete_file": ("🗑️", "Deleting a file", lambda a: f'{a("filename")} in the agent workspace'),
+    "list_workspace_files": ("📁", "Listing workspace files", lambda a: ""),
+    "open_application": ("🖥️", "Opening an app", lambda a: a("app_name")),
+    "list_sandbox_contents": ("📁", "Listing the sandbox", lambda a: a("subfolder")),
+    "create_sandbox_folder": ("📁", "Creating a folder", lambda a: f'"{a("folder_name")}" in the sandbox'),
+    "open_sandbox_folder_in_explorer": ("📂", "Opening the sandbox folder", lambda a: ""),
+    "open_youtube_search": ("▶️", "Opening a YouTube search", lambda a: f'"{a("query")}"'),
+    "send_email": ("✉️", "Sending an email", lambda a: f'to the pre-approved address · subject: {a("subject")}'),
+    "list_upcoming_events": ("📅", "Reading your calendar", lambda a: "next 5 events"),
+    "create_calendar_event": ("📅", "Adding a calendar event", lambda a: f'{a("title")} · {a("start_datetime")}'),
+    "delete_calendar_event": ("📅", "Deleting a calendar event", lambda a: a("event_title")),
+    "get_recent_actions": ("🧾", "Reading the action log", lambda a: ""),
+    "remember_fact": ("🧠", "Saving a fact to memory", lambda a: a("fact")),
+    "recall_facts": ("🧠", "Reading saved facts", lambda a: ""),
+    "forget_fact": ("🧠", "Forgetting a saved fact", lambda a: a("keyword")),
+}
+
+
+def describe_tool(function_name, function_args):
+    """Return (icon, title, detail) describing a tool call in plain language for the dashboard."""
+    args = function_args if isinstance(function_args, dict) else {}
+
+    def arg(key):
+        return str(args.get(key, "") or "").strip()
+
+    icon, title, detail = TOOL_DISPLAY.get(function_name, ("🛠️", f"Using {function_name}", lambda a: ""))
+    try:
+        detail_text = detail(arg)
+    except Exception:
+        detail_text = ""
+    return icon, title, detail_text
+
+
+def show(kind, **fields):
+    """Send one event to the dashboard. Dashboard problems must never affect the agent."""
+    if DASHBOARD_ENABLED:
+        try:
+            dashboard.add_event(kind, **fields)
+        except Exception:
+            pass
+
+
+def show_status(status):
+    """Update the status shown at the top of the dashboard."""
+    if DASHBOARD_ENABLED:
+        try:
+            dashboard.set_status(status)
+        except Exception:
+            pass
+
+
+def show_count(name):
+    """Add one to a session number on the dashboard (tools_used, approved, blocked, web_searches)."""
+    if DASHBOARD_ENABLED:
+        try:
+            dashboard.increment_stat(name)
+        except Exception:
+            pass
+
+
 def call_llm(messages, use_tools=True, force_tool=None):
     """Call the configured LLM provider (Ollama or Groq) through a unified interface.
 
@@ -207,6 +283,13 @@ def main():
     mode_name = "session mode" if SESSION_MODE else "push-to-talk"
     print(f"Personal AI Agent (voice {mode_name}, provider: {LLM_PROVIDER}) - press Ctrl+C to quit\n")
 
+    if DASHBOARD_ENABLED:
+        try:
+            dashboard.start(open_browser=DASHBOARD_OPEN_BROWSER)
+            dashboard.update_stats(web_search_limit=web_search.MAX_SEARCHES_PER_SESSION)
+        except Exception as e:
+            print(f"[Dashboard not available ({e}). The agent still works.]")
+
     past_messages = memory.load_history(limit=20)
     if past_messages:
         print("(Previous conversation loaded)\n")
@@ -219,24 +302,38 @@ def main():
     # Tools used in the previous answered turn, to detect follow-ups that need a fresh web search.
     previous_turn_tools = set()
 
+    # Numbers each approval request so the dashboard can mark it as allowed or cancelled.
+    approval_count = 0
+
     while True:
         if SESSION_MODE:
             if session_threshold is None:
+                show_status("idle")
                 flush_typed_keys()
                 input("Press Enter to START a conversation session...")
+                show_status("calibrating")
                 session_threshold = voice.calibrate_session()
                 if session_threshold is None:
+                    show_status("idle")
                     continue
                 print("Session started. Talk normally; I answer after you pause. Press ESC to end the session.\n")
+                show("session", text="Session started")
 
+            show_status("listening")
             status, audio_file = voice.listen_for_utterance(session_threshold)
             if status != "speech":
-                print(f"Session ended ({SESSION_END_REASONS.get(status, status)}).\n")
+                reason = SESSION_END_REASONS.get(status, status)
+                print(f"Session ended ({reason}).\n")
+                show("session", text=f"Session ended ({reason})")
+                show_status("idle")
                 session_threshold = None
                 continue
         else:
+            show_status("idle")
             flush_typed_keys()
             audio_file = voice.record_audio()
+
+        show_status("thinking")
 
         user_input = voice.transcribe_audio(audio_file)
         print(f"You said: {user_input}")
@@ -247,11 +344,15 @@ def main():
 
         if user_input.lower().strip(" .!") == "exit":
             print("Goodbye!")
+            show("session", text="Agent stopped. Goodbye!")
+            show_status("speaking")
             voice.speak_text("Goodbye!")
+            show_status("idle")
             break
 
         conversation_history.append({"role": "user", "content": user_input})
         memory.save_message("user", user_input)
+        show("user", text=user_input)
 
         assistant_reply = None
         iterations = 0
@@ -267,12 +368,18 @@ def main():
                 if ACTION_INTENT_PATTERN.search(user_input) is not None:
                     forced_choice = "required"
                     print("[Action request detected - requiring a real tool call]")
+                    show("info", icon="🛡️", text="Action request: the code requires a real tool call, so the AI cannot just claim it was done.",
+                         step="Safety rule: real tool call required")
                 elif wants_current_info(user_input):
                     forced_choice = "web_search"
                     print("[Current-info request detected - requiring web_search]")
+                    show("info", icon="🛡️", text="Question about current facts: the code requires a live web search instead of old training data.",
+                         step="Safety rule: live web search required")
                 elif wants_web_follow_up(user_input, previous_turn_tools):
                     forced_choice = "web_search"
                     print("[Follow-up to a web search detected - requiring a fresh web_search]")
+                    show("info", icon="🛡️", text="Follow-up question: the code requires a fresh web search instead of answering from memory.",
+                         step="Safety rule: fresh web search required")
 
             message = call_llm(conversation_history, use_tools=True, force_tool=forced_choice)
 
@@ -280,6 +387,7 @@ def main():
                 content = message.get("content") or ""
 
                 if content and ('"function"' in content or "tool_call" in content.lower()):
+                    show("info", icon="🛡️", text="The AI wrote a tool call as plain text; it was asked to use a real tool call.")
                     conversation_history.append({"role": "assistant", "content": content})
                     conversation_history.append({
                         "role": "user",
@@ -291,6 +399,8 @@ def main():
                         and content and ACTION_CLAIM_PATTERN.search(content.replace("*", ""))):
                     guard_retried = True
                     print("[Guard: reply claimed an action but no tool was called - asking the model to retry]")
+                    show("info", icon="🛡️", text="Check: the reply claimed an action but no tool ran, so the AI was asked again.",
+                         step="Safety check: unbacked claim caught")
                     conversation_history.append({"role": "assistant", "content": content})
                     conversation_history.append({
                         "role": "user",
@@ -319,15 +429,23 @@ def main():
                     function_args = tool_call["function"]["arguments"]
 
                 is_risky = tools.RISKY_TOOLS.get(function_name, False)
+                icon, title, detail = describe_tool(function_name, function_args)
 
                 if is_risky:
                     print(f"\n⚠️  The agent wants to run a RISKY action:")
                     print(f"   Tool: {function_name}")
                     print(f"   Arguments: {function_args}")
+                    approval_count += 1
+                    show("approval", approval_id=approval_count, detail=f"{title}\n{detail}" if detail else title)
+                    show_status("approval")
                     flush_typed_keys()
                     confirm = input("   Allow this? Type yes and press Enter (anything else cancels): ").strip().lower()
+                    allowed = confirm == "yes"
+                    show("approval_result", approval_id=approval_count, allowed=allowed)
+                    show_count("approved" if allowed else "blocked")
+                    show_status("thinking")
 
-                    if confirm != "yes":
+                    if not allowed:
                         function_result = "Action cancelled by user. Do not retry without asking again."
                         print("   -> Cancelled.\n")
                         action_logger.log_action(function_name, function_args, function_result, was_risky=True, was_confirmed=False)
@@ -341,6 +459,10 @@ def main():
                         print("   -> Confirmed, proceeding.\n")
 
                 print(f"[Agent is using tool: {function_name}({function_args})]")
+                show("tool", icon=icon, title=title, detail=detail)
+                show_count("tools_used")
+                if function_name == "web_search":
+                    show_count("web_searches")
 
                 if function_name in tools.AVAILABLE_FUNCTIONS:
                     function_to_call = tools.AVAILABLE_FUNCTIONS[function_name]
@@ -370,6 +492,8 @@ def main():
             assistant_reply = final_message.get("content") or "I reached the maximum number of steps trying to complete this."
 
         print(f"Agent: {assistant_reply}\n")
+        show("agent", text=assistant_reply)
+        show_status("speaking")
         voice.speak_text(assistant_reply)
 
         conversation_history.append({"role": "assistant", "content": assistant_reply})
