@@ -8,6 +8,7 @@ import re
 from faster_whisper import WhisperModel
 from piper import PiperVoice
 import keyboard
+import term_colors as tc
 
 SAMPLE_RATE = 16000
 TEMP_AUDIO_FILE = "temp_recording.wav"
@@ -44,13 +45,13 @@ WHISPER_INITIAL_PROMPT = (
     "the current time and date, news, prices, and who holds positions such as prime minister."
 )
 
-print("Loading Whisper model (this happens once)...")
+print(tc.dim("Loading Whisper model (this happens once)..."))
 stt_model = WhisperModel("base", device="cpu", compute_type="int8")
-print("Whisper model loaded.\n")
+print(tc.dim("Whisper model loaded.") + "\n")
 
-print("Loading TTS voice (this happens once)...")
+print(tc.dim("Loading TTS voice (this happens once)..."))
 tts_voice = PiperVoice.load("en_US-lessac-medium.onnx")
-print("TTS voice loaded.\n")
+print(tc.dim("TTS voice loaded.") + "\n")
 
 
 def _input_device_name():
@@ -73,7 +74,7 @@ def _rms(chunk):
 def record_audio():
     """Record audio from the microphone using push-to-talk: Enter to start, Enter again to stop."""
     input("Press Enter to START recording...")
-    print(f"Recording from [{_input_device_name()}]... press Enter again to STOP.")
+    print(tc.dim(f"Recording from [{_input_device_name()}]... press Enter again to STOP."))
 
     recorded_chunks = []
     max_frames = int(MAX_RECORDING_SECONDS * SAMPLE_RATE)
@@ -82,7 +83,7 @@ def record_audio():
     def callback(indata, frames, time_info, status):
         if status and not state["status_warned"]:
             state["status_warned"] = True
-            print(f"[Audio warning: {status}]")
+            print(tc.warn(f"[Audio warning: {status}]"))
         if state["frames"] < max_frames:
             recorded_chunks.append(indata.copy())
             state["frames"] += frames
@@ -92,7 +93,7 @@ def record_audio():
                                 device=INPUT_DEVICE, callback=callback)
     except Exception as e:
         input()
-        print(f"Could not open the microphone ({e}). Check INPUT_DEVICE in voice.py.")
+        print(tc.bad(f"Could not open the microphone ({e}). Check INPUT_DEVICE in voice.py."))
         return None
 
     stream.start()
@@ -101,21 +102,21 @@ def record_audio():
     stream.close()
 
     if not recorded_chunks:
-        print("Recording finished (no audio captured).")
+        print(tc.warn("Recording finished (no audio captured)."))
         return None
 
     audio = np.concatenate(recorded_chunks, axis=0)
     duration = len(audio) / SAMPLE_RATE
     peak = int(np.max(np.abs(audio.astype(np.int32))))
-    print(f"Recording finished ({duration:.1f} s, peak level {peak}).")
+    print(tc.dim(f"Recording finished ({duration:.1f} s, peak level {peak})."))
 
     if duration < MIN_RECORDING_SECONDS:
-        print("(Recording too short)")
+        print(tc.dim("(Recording too short)"))
         return None
 
     if peak < SILENCE_PEAK_THRESHOLD:
-        print("(Microphone is almost silent - check Windows mic permission, mute, input volume, "
-              "or set INPUT_DEVICE)")
+        print(tc.warn("(Microphone is almost silent - check Windows mic permission, mute, input volume, "
+                      "or set INPUT_DEVICE)"))
         return None
 
     wavfile.write(TEMP_AUDIO_FILE, SAMPLE_RATE, audio)
@@ -191,11 +192,11 @@ def calibrate_session():
     """Measure the room noise for a moment and return the loudness threshold for speech, or None on failure."""
     audio_queue = queue.Queue(maxsize=QUEUE_MAX_CHUNKS)
     dropped = {"count": 0}
-    print(f"Calibrating room noise for {CALIBRATION_SECONDS:.0f} s - please stay quiet...")
+    print(tc.dim(f"Calibrating room noise for {CALIBRATION_SECONDS:.0f} s - please stay quiet..."))
     try:
         stream = _open_session_stream(audio_queue, dropped)
     except Exception as e:
-        print(f"Could not open the microphone ({e}). Check INPUT_DEVICE in voice.py.")
+        print(tc.bad(f"Could not open the microphone ({e}). Check INPUT_DEVICE in voice.py."))
         return None
 
     levels = []
@@ -213,7 +214,7 @@ def calibrate_session():
 
     noise = float(np.median(levels)) if levels else 0.0
     threshold = max(noise * NOISE_MULTIPLIER, MIN_SPEECH_RMS)
-    print(f"Room noise RMS {noise:.0f} -> speech threshold {threshold:.0f}")
+    print(tc.dim(f"Room noise RMS {noise:.0f} -> speech threshold {threshold:.0f}"))
     return threshold
 
 
@@ -231,10 +232,10 @@ def listen_for_utterance(threshold):
     try:
         stream = _open_session_stream(audio_queue, dropped)
     except Exception as e:
-        print(f"Could not open the microphone ({e}). Check INPUT_DEVICE in voice.py.")
+        print(tc.bad(f"Could not open the microphone ({e}). Check INPUT_DEVICE in voice.py."))
         return "error", None
 
-    print(f"Listening... (speak, or press {SESSION_END_KEY.upper()} to end the session)")
+    print(tc.dim(f"Listening... (speak, or press {SESSION_END_KEY.upper()} to end the session)"))
     stream.start()
     utterance = None
     status = "idle"
@@ -255,7 +256,7 @@ def listen_for_utterance(threshold):
             was_in_speech = detector.in_speech
             utterance = detector.feed(chunk)
             if detector.in_speech and not was_in_speech:
-                print("  (hearing you...)")
+                print(tc.dim("  (hearing you...)"))
             if detector.in_speech:
                 last_activity = time.monotonic()
             if utterance is not None:
@@ -266,13 +267,13 @@ def listen_for_utterance(threshold):
         stream.close()
 
     if dropped["count"]:
-        print(f"[Audio warning: {dropped['count']} chunks dropped]")
+        print(tc.warn(f"[Audio warning: {dropped['count']} chunks dropped]"))
     if status != "speech":
         return status, None
 
     peak = int(np.max(np.abs(utterance.astype(np.int32))))
     reason = ", max length reached" if detector.hit_max else ""
-    print(f"  (got {len(utterance) / SAMPLE_RATE:.1f} s, peak {peak}{reason})")
+    print(tc.dim(f"  (got {len(utterance) / SAMPLE_RATE:.1f} s, peak {peak}{reason})"))
     wavfile.write(TEMP_AUDIO_FILE, SAMPLE_RATE, utterance)
     return "speech", TEMP_AUDIO_FILE
 
@@ -290,7 +291,7 @@ def transcribe_audio(file_path):
         initial_prompt=WHISPER_INITIAL_PROMPT,
     )
     text = " ".join(segment.text for segment in segments).strip()
-    print(f"[STT debug: language={info.language}, audio={info.duration:.1f} s]")
+    print(tc.dim(f"[STT debug: language={info.language}, audio={info.duration:.1f} s]"))
     return text
 
 
@@ -347,7 +348,7 @@ def speak_text(text):
     clean_text = shorten_for_speech(clean_text_for_speech(text))
     if not clean_text:
         return
-    print(f"[Speaking - press SPACE to skip]: {clean_text}")
+    print(tc.dim(f"[Speaking - press SPACE to skip]: {clean_text}"))
 
     audio_chunks = []
     for audio_chunk in tts_voice.synthesize(clean_text):
@@ -362,6 +363,6 @@ def speak_text(text):
     while sd.get_stream() and sd.get_stream().active:
         if keyboard.is_pressed('space'):
             sd.stop()
-            print("(Speech skipped)")
+            print(tc.dim("(Speech skipped)"))
             break
         time.sleep(0.05)

@@ -5,6 +5,7 @@ import voice
 import action_logger
 import fact_memory
 import dashboard
+import term_colors as tc
 import web_search
 import os
 import re
@@ -235,7 +236,7 @@ def call_llm(messages, use_tools=True, force_tool=None):
             response = groq_client.chat.completions.create(**kwargs)
         except Exception as e:
             if force_tool:
-                print(f"[Warning: forced tool call ({force_tool}) was rejected ({e}); retrying without it]")
+                print(tc.warn(f"[Warning: forced tool call ({force_tool}) was rejected ({e}); retrying without it]"))
                 kwargs.pop("tool_choice", None)
                 response = groq_client.chat.completions.create(**kwargs)
             else:
@@ -281,18 +282,18 @@ def main():
     fact_memory.init_facts_db()
 
     mode_name = "session mode" if SESSION_MODE else "push-to-talk"
-    print(f"Personal AI Agent (voice {mode_name}, provider: {LLM_PROVIDER}) - press Ctrl+C to quit\n")
+    print(tc.bold(f"Personal AI Agent (voice {mode_name}, provider: {LLM_PROVIDER})") + tc.dim(" - press Ctrl+C to quit") + "\n")
 
     if DASHBOARD_ENABLED:
         try:
             dashboard.start(open_browser=DASHBOARD_OPEN_BROWSER)
             dashboard.update_stats(web_search_limit=web_search.MAX_SEARCHES_PER_SESSION)
         except Exception as e:
-            print(f"[Dashboard not available ({e}). The agent still works.]")
+            print(tc.warn(f"[Dashboard not available ({e}). The agent still works.]"))
 
     past_messages = memory.load_history(limit=20)
     if past_messages:
-        print("(Previous conversation loaded)\n")
+        print(tc.dim("(Previous conversation loaded)") + "\n")
 
     conversation_history = [{"role": "system", "content": build_system_prompt()}] + past_messages
 
@@ -316,14 +317,14 @@ def main():
                 if session_threshold is None:
                     show_status("idle")
                     continue
-                print("Session started. Talk normally; I answer after you pause. Press ESC to end the session.\n")
+                print(tc.ok("Session started.") + " Talk normally; I answer after you pause. Press ESC to end the session.\n")
                 show("session", text="Session started")
 
             show_status("listening")
             status, audio_file = voice.listen_for_utterance(session_threshold)
             if status != "speech":
                 reason = SESSION_END_REASONS.get(status, status)
-                print(f"Session ended ({reason}).\n")
+                print(tc.dim(f"Session ended ({reason}).") + "\n")
                 show("session", text=f"Session ended ({reason})")
                 show_status("idle")
                 session_threshold = None
@@ -336,10 +337,10 @@ def main():
         show_status("thinking")
 
         user_input = voice.transcribe_audio(audio_file)
-        print(f"You said: {user_input}")
+        print(f"{tc.bold('You said:')} {user_input}")
 
         if not user_input.strip():
-            print("(No speech detected, try again)\n")
+            print(tc.dim("(No speech detected, try again)") + "\n")
             continue
 
         if user_input.lower().strip(" .!") == "exit":
@@ -367,17 +368,17 @@ def main():
             if iterations == 1 and LLM_PROVIDER == "groq":
                 if ACTION_INTENT_PATTERN.search(user_input) is not None:
                     forced_choice = "required"
-                    print("[Action request detected - requiring a real tool call]")
+                    print(tc.info("[Action request detected - requiring a real tool call]"))
                     show("info", icon="🛡️", text="Action request: the code requires a real tool call, so the AI cannot just claim it was done.",
                          step="Safety rule: real tool call required")
                 elif wants_current_info(user_input):
                     forced_choice = "web_search"
-                    print("[Current-info request detected - requiring web_search]")
+                    print(tc.info("[Current-info request detected - requiring web_search]"))
                     show("info", icon="🛡️", text="Question about current facts: the code requires a live web search instead of old training data.",
                          step="Safety rule: live web search required")
                 elif wants_web_follow_up(user_input, previous_turn_tools):
                     forced_choice = "web_search"
-                    print("[Follow-up to a web search detected - requiring a fresh web_search]")
+                    print(tc.info("[Follow-up to a web search detected - requiring a fresh web_search]"))
                     show("info", icon="🛡️", text="Follow-up question: the code requires a fresh web search instead of answering from memory.",
                          step="Safety rule: fresh web search required")
 
@@ -398,7 +399,7 @@ def main():
                 if (not used_tool_this_turn and not guard_retried
                         and content and ACTION_CLAIM_PATTERN.search(content.replace("*", ""))):
                     guard_retried = True
-                    print("[Guard: reply claimed an action but no tool was called - asking the model to retry]")
+                    print(tc.warn("[Guard: reply claimed an action but no tool was called - asking the model to retry]"))
                     show("info", icon="🛡️", text="Check: the reply claimed an action but no tool ran, so the AI was asked again.",
                          step="Safety check: unbacked claim caught")
                     conversation_history.append({"role": "assistant", "content": content})
@@ -432,14 +433,14 @@ def main():
                 icon, title, detail = describe_tool(function_name, function_args)
 
                 if is_risky:
-                    print(f"\n⚠️  The agent wants to run a RISKY action:")
-                    print(f"   Tool: {function_name}")
-                    print(f"   Arguments: {function_args}")
+                    print("\n" + tc.warn("⚠️  The agent wants to run a RISKY action:"))
+                    print(tc.warn(f"   Tool: {function_name}"))
+                    print(tc.warn(f"   Arguments: {function_args}"))
                     approval_count += 1
                     show("approval", approval_id=approval_count, detail=f"{title}\n{detail}" if detail else title)
                     show_status("approval")
                     flush_typed_keys()
-                    confirm = input("   Allow this? Type yes and press Enter (anything else cancels): ").strip().lower()
+                    confirm = input(tc.warn("   Allow this? Type yes and press Enter (anything else cancels): ")).strip().lower()
                     allowed = confirm == "yes"
                     show("approval_result", approval_id=approval_count, allowed=allowed)
                     show_count("approved" if allowed else "blocked")
@@ -447,7 +448,7 @@ def main():
 
                     if not allowed:
                         function_result = "Action cancelled by user. Do not retry without asking again."
-                        print("   -> Cancelled.\n")
+                        print(tc.bad("   -> Cancelled.") + "\n")
                         action_logger.log_action(function_name, function_args, function_result, was_risky=True, was_confirmed=False)
                         conversation_history.append({
                             "role": "tool",
@@ -456,9 +457,9 @@ def main():
                         })
                         continue
                     else:
-                        print("   -> Confirmed, proceeding.\n")
+                        print(tc.ok("   -> Confirmed, proceeding.") + "\n")
 
-                print(f"[Agent is using tool: {function_name}({function_args})]")
+                print(tc.info(f"[Agent is using tool: {function_name}({function_args})]"))
                 show("tool", icon=icon, title=title, detail=detail)
                 show_count("tools_used")
                 if function_name == "web_search":
@@ -491,7 +492,7 @@ def main():
             final_message = call_llm(conversation_history, use_tools=False)
             assistant_reply = final_message.get("content") or "I reached the maximum number of steps trying to complete this."
 
-        print(f"Agent: {assistant_reply}\n")
+        print(f"{tc.bold('Agent:')} {assistant_reply}\n")
         show("agent", text=assistant_reply)
         show_status("speaking")
         voice.speak_text(assistant_reply)
